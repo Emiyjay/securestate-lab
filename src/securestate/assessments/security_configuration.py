@@ -91,12 +91,35 @@ def assess_security_configuration(
                     "Verify account collection completeness and inspect /etc/passwd.",
                 ))
     elif os_name == "Windows":
+        if "administrators_group_members" in errors:
+            admin_evidence = "Local Administrators group membership collection failed."
+            admin_summary = "Administrative membership could not be evaluated."
+        else:
+            members = inventory.get("administrators_group_members", [])
+            local_users = {u.get("sid"): u for u in inventory.get("users", []) if u.get("sid")}
+            local_admins = [
+                (member, local_users.get(member.get("sid")))
+                for member in members
+                if member.get("sid") in local_users
+            ]
+            enabled_local_admins = [
+                member.get("name", "<unnamed>")
+                for member, user in local_admins
+                if user and user.get("enabled") is True
+            ]
+            admin_evidence = (
+                f"{len(inventory.get('users', []))} local account records; "
+                f"{len(members)} Administrators group member(s); "
+                f"{len(local_admins)} matched local account(s); "
+                f"{len(enabled_local_admins)} matched enabled local administrator account(s)."
+            )
+            if enabled_local_admins:
+                admin_evidence += " Enabled local administrators: " + ", ".join(enabled_local_admins)
+            admin_summary = "Administrators group membership collected; authorization policy review is still required."
         results.append(_result(
             "ID-WIN-001", "Local account privilege review", os_name,
-            CheckStatus.UNKNOWN,
-            "Local account state was collected, but administrative membership was not.",
-            f"{len(inventory.get('users', []))} local account records collected; Administrators group membership is not part of this inventory.",
-            "Collect local group membership and review enabled accounts in the Administrators group.",
+            CheckStatus.UNKNOWN, admin_summary, admin_evidence,
+            "Confirm each administrator is authorized, necessary, individually attributable, and protected by an appropriate authentication policy.",
         ))
 
     # Listening sockets: wildcard binds indicate broad interface exposure, not
@@ -117,7 +140,7 @@ def assess_security_configuration(
                 "NET-LISTEN-001", "Listening interface exposure", os_name,
                 CheckStatus.UNKNOWN,
                 f"{len(wildcard)} listener(s) bind to wildcard interfaces.",
-                f"{len(listeners)} listening endpoints observed; {len(wildcard)} wildcard-bound and {len(loopback)} loopback-bound.",
+                f"{len(listeners)} listening endpoints observed; {len(wildcard)} wildcard-bound and {len(loopback)} loopback-bound." + (\n                    " Process owners: " + ", ".join(sorted({str(item.get('process_name') or 'unknown') + " (PID " + str(item.get('process_id', '?')) + ")" for item in wildcard})) if any(item.get("process_name") or item.get("process_id") is not None for item in wildcard) else "",
                 "Identify each owning process, confirm intended network access, and validate reachability against host firewall rules.",
             ))
         elif listeners:
