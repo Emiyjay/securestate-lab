@@ -56,7 +56,7 @@ class TestInventoryHelpers(unittest.TestCase):
     def test_linux_ports_parse_process_owner(self, run_mock, _which):
         run_mock.return_value = type("Result", (), {
             "returncode": 0,
-            "stdout": 'tcp LISTEN 0 128 0.0.0.0:8080 0.0.0.0:* users:(("python3",pid=4321,fd=5))\\n',
+            "stdout": 'tcp LISTEN 0 128 0.0.0.0:8080 0.0.0.0:* users:(("python3",pid=4321,fd=5))\n',
             "stderr": "",
         })()
         result = discovery._linux_ports()
