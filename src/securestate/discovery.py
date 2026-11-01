@@ -8,13 +8,16 @@ from __future__ import annotations
 import json
 import os
 import platform
-import pwd
-import grp
+try:
+    import pwd
+    import grp
+except ImportError:  # Windows does not provide the Unix account modules.
+    pwd = None
+    grp = None
 import shutil
 import socket
 import subprocess
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import Any
 
 
