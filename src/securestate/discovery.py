@@ -115,13 +115,41 @@ Get-Service | Select-Object @{n='name';e={$_.Name}},
     return _as_list(_run_powershell(script))
 
 
-def _windows_ports() -> list[dict]:
+def _windows_admin_group_members() -> list[dict]:
+    """Return members of the built-in local Administrators group (SID-based)."""
     script = r"""
 $ErrorActionPreference = 'Stop'
-Get-NetTCPConnection -State Listen | Select-Object LocalAddress,LocalPort,
- @{n='state';e={$_.State.ToString()}},
- @{n='process_id';e={$_.OwningProcess}} |
+$group = Get-LocalGroup -SID 'S-1-5-32-544'
+Get-LocalGroupMember -Group $group.Name |
+ Select-Object @{n='name';e={$_.Name}},
+               @{n='sid';e={$_.SID.Value}},
+               @{n='object_class';e={$_.ObjectClass}},
+               @{n='principal_source';e={$_.PrincipalSource}} |
  ConvertTo-Json -Depth 3 -Compress
+"""
+    return _as_list(_run_powershell(script))
+
+
+def _windows_ports() -> list[dict]:
+    """Collect TCP listeners and enrich each endpoint with owning process metadata."""
+    script = r"""
+$ErrorActionPreference = 'Stop'
+$rows = foreach ($connection in (Get-NetTCPConnection -State Listen)) {
+    $process = Get-Process -Id $connection.OwningProcess -ErrorAction SilentlyContinue
+    $processPath = $null
+    if ($process) {
+        try { $processPath = $process.Path } catch { $processPath = $null }
+    }
+    [pscustomobject]@{
+        LocalAddress = $connection.LocalAddress
+        LocalPort = $connection.LocalPort
+        state = $connection.State.ToString()
+        process_id = $connection.OwningProcess
+        process_name = if ($process) {$process.ProcessName} else {$null}
+        process_path = $processPath
+    }
+}
+$rows | ConvertTo-Json -Depth 3 -Compress
 """
     return _as_list(_run_powershell(script))
 
@@ -253,6 +281,7 @@ def collect_system_inventory() -> dict:
         "software": [],
         "updates": [],
         "users": [],
+        "administrators_group_members": [],
         "services": [],
         "listening_ports": [],
         "collection_errors": [],
@@ -263,6 +292,7 @@ def collect_system_inventory() -> dict:
             "software": _windows_software,
             "updates": _windows_updates,
             "users": _windows_users,
+            "administrators_group_members": _windows_admin_group_members,
             "services": _windows_services,
             "listening_ports": _windows_ports,
         }
@@ -271,6 +301,7 @@ def collect_system_inventory() -> dict:
             "software": _linux_software,
             "updates": _linux_updates,
             "users": _linux_users,
+            "administrators_group_members": lambda: [],
             "services": _linux_services,
             "listening_ports": _linux_ports,
         }
