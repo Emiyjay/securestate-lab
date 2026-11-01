@@ -130,6 +130,24 @@ class TestSecurityConfiguration(unittest.TestCase):
         self.assertIn("example-service", listener.evidence)
         self.assertIn("4321", listener.evidence)
 
+    def test_linux_privileged_group_review_uses_collected_members(self):
+        inventory = {
+            "system": {"operating_system": "Linux"},
+            "users": [{"name": "root", "uid": 0}],
+            "privileged_group_members": [
+                {"name": "alice", "group": "sudo", "gid": 27},
+            ],
+            "listening_ports": [],
+            "services": [],
+            "updates": [],
+            "collection_errors": [],
+        }
+        results = assess_security_configuration(inventory)
+        privileged = next(r for r in results if r.check_id == "ID-LINUX-002")
+        self.assertEqual(privileged.status, CheckStatus.UNKNOWN)
+        self.assertIn("alice (sudo)", privileged.evidence)
+
+
 
 if __name__ == "__main__":
     unittest.main()
