@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (
 )
 
 from securestate.platform_info import identify_platform
+from securestate.discovery import collect_system_inventory
 from securestate.assessments.windows_firewall import (
     assess_windows_firewall,
 )
