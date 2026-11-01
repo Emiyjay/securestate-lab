@@ -30,10 +30,12 @@ class TestInventoryHelpers(unittest.TestCase):
     @patch("securestate.discovery._windows_users", return_value=[])
     @patch("securestate.discovery._windows_services", return_value=[])
     @patch("securestate.discovery._windows_ports", return_value=[])
+    @patch("securestate.discovery._windows_admin_group_members", return_value=[{"name": "HOST\\Admin", "sid": "S-1-5-21-1"}])
     @patch("securestate.discovery.platform.system", return_value="Windows")
     def test_windows_inventory_uses_windows_collectors(self, *_mocks):
         result = discovery.collect_system_inventory()
         self.assertEqual(result["software"], [{"name": "Example", "version": "1.0"}])
+        self.assertEqual(result["administrators_group_members"], [{"name": "HOST\\Admin", "sid": "S-1-5-21-1"}])
         self.assertEqual(result["collection_errors"], [])
 
     @patch("securestate.discovery._linux_software", side_effect=RuntimeError("package query unavailable"))
