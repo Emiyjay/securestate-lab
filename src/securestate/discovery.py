@@ -243,7 +243,7 @@ def _linux_ports() -> list[dict]:
             "process_id": None,
             "process_metadata_available": False,
         }
-        process_match = re.search(r'"([^"]+)",pid=(\\d+)', line)
+        process_match = re.search(r'"([^"]+)",pid=(\d+)', line)
         if process_match:
             record["process_name"] = process_match.group(1)
             record["process_id"] = int(process_match.group(2))
