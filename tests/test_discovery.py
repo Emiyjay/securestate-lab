@@ -43,6 +43,7 @@ class TestInventoryHelpers(unittest.TestCase):
     @patch("securestate.discovery._linux_users", return_value=[])
     @patch("securestate.discovery._linux_services", return_value=[])
     @patch("securestate.discovery._linux_ports", return_value=[])
+    @patch("securestate.discovery._linux_privileged_group_members", return_value=[])
     @patch("securestate.discovery.platform.system", return_value="Linux")
     def test_linux_section_failure_is_recorded_without_aborting(self, *_mocks):
         result = discovery.collect_system_inventory()
