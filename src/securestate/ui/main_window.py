@@ -434,10 +434,17 @@ class MainWindow(QMainWindow):
                 rows.append(("Update", item.get("id", item.get("package", "")), item.get("installed_on", item.get("candidate", "")), item.get("description", "")))
             for item in inventory.get("users", []):
                 rows.append(("User", item.get("name", ""), item.get("enabled", item.get("uid", "")), item.get("primary_group", item.get("shell", ""))))
+            for item in inventory.get("administrators_group_members", []):
+                rows.append(("Local administrator", item.get("name", ""), item.get("object_class", ""), f"SID: {item.get('sid', '')}; Source: {item.get('principal_source', '')}"))
             for item in inventory.get("services", []):
                 rows.append(("Service", item.get("name", item.get("unit", "")), item.get("status", item.get("active", "")), item.get("display_name", item.get("description", ""))))
             for item in inventory.get("listening_ports", []):
-                rows.append(("Listening port", item.get("LocalPort", item.get("local_endpoint", "")), item.get("state", ""), item.get("LocalAddress", item.get("protocol", ""))))
+                details = item.get("LocalAddress", item.get("protocol", ""))
+                if item.get("process_name") or item.get("process_id") is not None:
+                    details += f"; Process: {item.get('process_name') or 'Unknown'} (PID {item.get('process_id', 'Unknown')})"
+                if item.get("process_path"):
+                    details += f"; Path: {item['process_path']}"
+                rows.append(("Listening port", item.get("LocalPort", item.get("local_endpoint", "")), item.get("state", ""), details))
 
             self.inventory_table.setRowCount(min(len(rows), 500))
             for row_index, values in enumerate(rows[:500]):
@@ -450,6 +457,7 @@ class MainWindow(QMainWindow):
                 "software": len(inventory.get("software", [])),
                 "updates": len(inventory.get("updates", [])),
                 "users": len(inventory.get("users", [])),
+                "administrators_group_members": len(inventory.get("administrators_group_members", [])),
                 "services": len(inventory.get("services", [])),
                 "listening_ports": len(inventory.get("listening_ports", [])),
             }
