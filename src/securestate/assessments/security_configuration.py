@@ -136,11 +136,22 @@ def assess_security_configuration(
         wildcard = [item for item in listeners if _is_wildcard_listener(item)]
         loopback = [item for item in listeners if _is_loopback_listener(item)]
         if wildcard:
+            owner_records = sorted({
+                f"{item.get('process_name') or 'unknown'} (PID {item.get('process_id', '?')})"
+                for item in wildcard
+                if item.get("process_name") or item.get("process_id") is not None
+            })
+            evidence = (
+                f"{len(listeners)} listening endpoints observed; "
+                f"{len(wildcard)} wildcard-bound and {len(loopback)} loopback-bound."
+            )
+            if owner_records:
+                evidence += " Process owners: " + ", ".join(owner_records)
             results.append(_result(
                 "NET-LISTEN-001", "Listening interface exposure", os_name,
                 CheckStatus.UNKNOWN,
                 f"{len(wildcard)} listener(s) bind to wildcard interfaces.",
-                f"{len(listeners)} listening endpoints observed; {len(wildcard)} wildcard-bound and {len(loopback)} loopback-bound." + (" Process owners: " + ", ".join(sorted({str(item.get('process_name') or 'unknown') + " (PID " + str(item.get('process_id', '?')) + ")" for item in wildcard})) if any(item.get("process_name") or item.get("process_id") is not None for item in wildcard) else "",
+                evidence,
                 "Identify each owning process, confirm intended network access, and validate reachability against host firewall rules.",
             ))
         elif listeners:
