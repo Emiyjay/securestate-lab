@@ -36,15 +36,22 @@ To design and experimentally evaluate a cross-platform operating system security
 
 ## 5. Current Development Status
 
-The initial project foundation includes:
+Implemented research prototype capabilities:
 
 - Operating system and Python environment identification.
-- Structured assessment result model.
-- Security assessment status classification.
-- Boolean security-control evaluation rules.
-- Initial automated unit tests.
+- Read-only Windows and Linux system inventory collectors.
+- Windows local Administrators group membership and TCP listener process attribution.
+- Linux sudo/wheel membership and TCP/UDP listener process attribution where permissions allow.
+- Structured assessment results and evidence-backed security configuration checks.
+- Independent Windows Defender Firewall profile assessment.
+- OSV package/version vulnerability queries with CISA KEV enrichment.
+- PySide6 desktop interface with separate discovery, configuration and vulnerability intelligence workflows.
 
-**Current test result:** 4 unit tests passing.
+The vulnerability intelligence module currently queries package records that can be mapped to an OSV ecosystem. OSV matches are classified as `VALIDATION_REQUIRED`, not confirmed host vulnerabilities. CISA KEV membership indicates known exploitation of a CVE, not proof that the installed host is affected. Distribution backports and vendor-specific package revisions require additional validation.
+
+Windows installed-software records and RPM inventory are not yet fully mapped to OSV ecosystems. NVD enrichment, vendor advisory correlation, persistent finding history, controlled remediation and independent before/after verification remain future implementation stages.
+
+Automated tests must be run in the target environment; mocked Linux tests do not replace a real Linux VM experiment.
 
 ## 6. Project Structure
 
