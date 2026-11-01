@@ -12,6 +12,7 @@ from PySide6.QtWidgets import (
     QTableWidget,
     QTableWidgetItem,
     QHeaderView,
+    QScrollArea,
 )
 
 from securestate.platform_info import identify_platform
@@ -436,6 +437,8 @@ class MainWindow(QMainWindow):
                 rows.append(("User", item.get("name", ""), item.get("enabled", item.get("uid", "")), item.get("primary_group", item.get("shell", ""))))
             for item in inventory.get("administrators_group_members", []):
                 rows.append(("Local administrator", item.get("name", ""), item.get("object_class", ""), f"SID: {item.get('sid', '')}; Source: {item.get('principal_source', '')}"))
+            for item in inventory.get("privileged_group_members", []):
+                rows.append(("Linux privileged group", item.get("name", ""), item.get("group", ""), f"GID: {item.get('gid', '')}"))
             for item in inventory.get("services", []):
                 rows.append(("Service", item.get("name", item.get("unit", "")), item.get("status", item.get("active", "")), item.get("display_name", item.get("description", ""))))
             for item in inventory.get("listening_ports", []):
@@ -458,6 +461,7 @@ class MainWindow(QMainWindow):
                 "updates": len(inventory.get("updates", [])),
                 "users": len(inventory.get("users", [])),
                 "administrators_group_members": len(inventory.get("administrators_group_members", [])),
+                "privileged_group_members": len(inventory.get("privileged_group_members", [])),
                 "services": len(inventory.get("services", [])),
                 "listening_ports": len(inventory.get("listening_ports", [])),
             }
@@ -543,7 +547,10 @@ class MainWindow(QMainWindow):
             True
         )
         self.firewall_table.setWordWrap(True)
-        self.firewall_table.setMinimumHeight(280)
+        self.firewall_table.setMinimumHeight(190)
+        self.firewall_table.setMaximumHeight(260)
+        self.firewall_table.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.firewall_table.verticalHeader().setVisible(False)
 
         card_layout.addWidget(heading)
         card_layout.addWidget(details)
@@ -570,7 +577,10 @@ class MainWindow(QMainWindow):
         )
         self.configuration_table.horizontalHeader().setStretchLastSection(True)
         self.configuration_table.setWordWrap(True)
-        self.configuration_table.setMinimumHeight(280)
+        self.configuration_table.setMinimumHeight(210)
+        self.configuration_table.setMaximumHeight(320)
+        self.configuration_table.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.configuration_table.verticalHeader().setVisible(False)
 
         card_layout.addWidget(self.configuration_button)
         card_layout.addWidget(self.configuration_summary)
@@ -579,7 +589,12 @@ class MainWindow(QMainWindow):
         layout.addWidget(card)
         layout.addStretch()
 
-        return page
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        scroll.setWidget(page)
+        return scroll
 
     def run_firewall_assessment(self):
         self.firewall_button.setEnabled(False)
@@ -656,7 +671,6 @@ class MainWindow(QMainWindow):
         self.configuration_button.setText("Assessing Configuration...")
         try:
             results = assess_security_configuration(self.last_inventory)
-            results.extend(assess_windows_firewall())
             self.configuration_table.setRowCount(len(results))
 
             counts = {"PASS": 0, "FAIL": 0, "UNKNOWN": 0, "NOT_APPLICABLE": 0}
