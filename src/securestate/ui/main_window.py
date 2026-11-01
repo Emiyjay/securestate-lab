@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
 
 from securestate.platform_info import identify_platform
 from securestate.discovery import collect_system_inventory
+from securestate.assessments.security_configuration import assess_security_configuration
 from securestate.assessments.windows_firewall import (
     assess_windows_firewall,
 )
@@ -32,6 +33,7 @@ class MainWindow(QMainWindow):
 
         self.navigation_buttons = []
         self.system_info_labels = {}
+        self.last_inventory = None
 
         self.create_interface()
 
@@ -541,6 +543,31 @@ class MainWindow(QMainWindow):
         card_layout.addWidget(self.firewall_summary)
         card_layout.addWidget(self.firewall_table)
 
+        self.configuration_button = QPushButton("Run Security Configuration Assessment")
+        self.configuration_button.setObjectName("action_button")
+        self.configuration_button.clicked.connect(self.run_configuration_assessment)
+
+        self.configuration_summary = QLabel(
+            "Collect system inventory before running configuration assessment."
+        )
+        self.configuration_summary.setObjectName("muted_text")
+        self.configuration_summary.setWordWrap(True)
+
+        self.configuration_table = QTableWidget(0, 5)
+        self.configuration_table.setHorizontalHeaderLabels([
+            "Check ID", "Control", "Status", "Evidence", "Recommendation"
+        ])
+        self.configuration_table.horizontalHeader().setSectionResizeMode(
+            QHeaderView.ResizeMode.ResizeToContents
+        )
+        self.configuration_table.horizontalHeader().setStretchLastSection(True)
+        self.configuration_table.setWordWrap(True)
+        self.configuration_table.setMinimumHeight(280)
+
+        card_layout.addWidget(self.configuration_button)
+        card_layout.addWidget(self.configuration_summary)
+        card_layout.addWidget(self.configuration_table)
+
         layout.addWidget(card)
         layout.addStretch()
 
@@ -609,6 +636,46 @@ class MainWindow(QMainWindow):
             self.firewall_button.setText(
                 "Run Firewall Assessment"
             )
+
+    def run_configuration_assessment(self):
+        if not self.last_inventory:
+            self.configuration_summary.setText(
+                "No inventory available. Open System Discovery and run Full System Inventory first."
+            )
+            return
+
+        self.configuration_button.setEnabled(False)
+        self.configuration_button.setText("Assessing Configuration...")
+        try:
+            results = assess_security_configuration(self.last_inventory)
+            results.extend(assess_windows_firewall())
+            self.configuration_table.setRowCount(len(results))
+
+            counts = {"PASS": 0, "FAIL": 0, "UNKNOWN": 0, "NOT_APPLICABLE": 0}
+            for row, result in enumerate(results):
+                status = result.status.value
+                counts[status] = counts.get(status, 0) + 1
+                values = [
+                    result.check_id, result.control, status,
+                    result.evidence, result.recommendation,
+                ]
+                for column, value in enumerate(values):
+                    item = QTableWidgetItem(str(value))
+                    item.setToolTip(str(value))
+                    self.configuration_table.setItem(row, column, item)
+
+            self.configuration_summary.setText(
+                "Assessment completed | "
+                + " | ".join(f"{key}: {value}" for key, value in counts.items())
+                + " | Read-only checks; UNKNOWN means more evidence is required."
+            )
+            self.statusBar().showMessage("Security configuration assessment completed.")
+        except Exception as error:
+            self.configuration_summary.setText(f"Assessment error: {error}")
+            self.statusBar().showMessage("Security configuration assessment failed.")
+        finally:
+            self.configuration_button.setEnabled(True)
+            self.configuration_button.setText("Run Security Configuration Assessment")
 
     def create_placeholder_page(self, title, description):
         page = QWidget()
