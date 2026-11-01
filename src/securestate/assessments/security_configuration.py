@@ -122,6 +122,25 @@ def assess_security_configuration(
             "Confirm each administrator is authorized, necessary, individually attributable, and protected by an appropriate authentication policy.",
         ))
 
+    if os_name == "Linux":
+        if "privileged_group_members" in errors:
+            privileged_evidence = "Administrative group membership collection failed."
+        else:
+            privileged = inventory.get("privileged_group_members", [])
+            names = sorted({f"{item.get('name')} ({item.get('group')})" for item in privileged})
+            privileged_evidence = (
+                f"{len(privileged)} sudo/wheel group membership record(s) collected."
+            )
+            if names:
+                privileged_evidence += " Members: " + ", ".join(names)
+        results.append(_result(
+            "ID-LINUX-002", "Administrative group membership review", os_name,
+            CheckStatus.UNKNOWN,
+            "Administrative group membership collected; authorization policy review is still required.",
+            privileged_evidence,
+            "Verify each sudo/wheel member is authorized and follows least-privilege requirements.",
+        ))
+
     # Listening sockets: wildcard binds indicate broad interface exposure, not
     # proof of remote reachability or a vulnerability.
     if "listening_ports" in errors:
@@ -147,6 +166,8 @@ def assess_security_configuration(
             )
             if owner_records:
                 evidence += " Process owners: " + ", ".join(owner_records)
+            elif os_name == "Linux":
+                evidence += " Process ownership was not exposed by ss; repeat with appropriate privileges if authorized."
             results.append(_result(
                 "NET-LISTEN-001", "Listening interface exposure", os_name,
                 CheckStatus.UNKNOWN,
