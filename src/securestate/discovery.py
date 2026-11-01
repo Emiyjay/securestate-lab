@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import os
 import platform
+import re
 try:
     import pwd
     import grp
@@ -223,21 +224,56 @@ def _linux_services() -> list[dict]:
 
 
 def _linux_ports() -> list[dict]:
+    """Collect listening TCP/UDP endpoints and process metadata when permitted."""
     if not shutil.which("ss"):
         raise RuntimeError("ss utility was not found.")
-    result = _run(["ss", "-H", "-lntu"], timeout=20)
+    result = _run(["ss", "-H", "-lntup"], timeout=20)
     if result.returncode != 0:
         raise RuntimeError(result.stderr.strip() or "ss query failed.")
     listeners = []
     for line in result.stdout.splitlines():
         fields = line.split()
-        if len(fields) >= 5:
-            listeners.append({
-                "protocol": fields[0],
-                "state": fields[1],
-                "local_endpoint": fields[4],
-            })
+        if len(fields) < 5:
+            continue
+        record = {
+            "protocol": fields[0],
+            "state": fields[1],
+            "local_endpoint": fields[4],
+            "process_name": None,
+            "process_id": None,
+            "process_metadata_available": False,
+        }
+        process_match = re.search(r'"([^"]+)",pid=(\\d+)', line)
+        if process_match:
+            record["process_name"] = process_match.group(1)
+            record["process_id"] = int(process_match.group(2))
+            record["process_metadata_available"] = True
+        listeners.append(record)
     return listeners
+
+
+def _linux_privileged_group_members() -> list[dict]:
+    """Inventory members of common administrative groups without assuming policy."""
+    if grp is None:
+        raise RuntimeError("Unix group database is unavailable.")
+    records = []
+    for group_name in ("sudo", "wheel"):
+        try:
+            group = grp.getgrnam(group_name)
+        except KeyError:
+            continue
+        members = set(group.gr_mem)
+        if pwd is not None:
+            for account in pwd.getpwall():
+                if account.pw_gid == group.gr_gid:
+                    members.add(account.pw_name)
+        for member in sorted(members):
+            records.append({
+                "group": group_name,
+                "name": member,
+                "gid": group.gr_gid,
+            })
+    return records
 
 
 def _linux_updates() -> list[dict]:
@@ -282,6 +318,7 @@ def collect_system_inventory() -> dict:
         "updates": [],
         "users": [],
         "administrators_group_members": [],
+        "privileged_group_members": [],
         "services": [],
         "listening_ports": [],
         "collection_errors": [],
@@ -293,6 +330,7 @@ def collect_system_inventory() -> dict:
             "updates": _windows_updates,
             "users": _windows_users,
             "administrators_group_members": _windows_admin_group_members,
+            "privileged_group_members": lambda: [],
             "services": _windows_services,
             "listening_ports": _windows_ports,
         }
@@ -302,6 +340,7 @@ def collect_system_inventory() -> dict:
             "updates": _linux_updates,
             "users": _linux_users,
             "administrators_group_members": lambda: [],
+            "privileged_group_members": _linux_privileged_group_members,
             "services": _linux_services,
             "listening_ports": _linux_ports,
         }
