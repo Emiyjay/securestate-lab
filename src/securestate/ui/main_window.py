@@ -389,11 +389,79 @@ class MainWindow(QMainWindow):
         button.clicked.connect(self.refresh_system_information)
 
         layout.addWidget(button)
+
+        inventory_button = QPushButton("Run Full System Inventory")
+        inventory_button.setObjectName("action_button")
+        inventory_button.clicked.connect(self.run_full_inventory)
+        layout.addWidget(inventory_button)
+
+        self.inventory_summary = QLabel(
+            "Full inventory has not been collected."
+        )
+        self.inventory_summary.setObjectName("muted_text")
+        self.inventory_summary.setWordWrap(True)
+        layout.addWidget(self.inventory_summary)
+
+        self.inventory_table = QTableWidget(0, 4)
+        self.inventory_table.setHorizontalHeaderLabels(
+            ["Category", "Name / Identifier", "Version / State", "Details"]
+        )
+        self.inventory_table.horizontalHeader().setSectionResizeMode(
+            QHeaderView.ResizeMode.ResizeToContents
+        )
+        self.inventory_table.horizontalHeader().setStretchLastSection(True)
+        self.inventory_table.setWordWrap(True)
+        self.inventory_table.setMinimumHeight(260)
+        layout.addWidget(self.inventory_table)
         layout.addStretch()
 
         self.refresh_system_information()
 
         return page
+
+    def run_full_inventory(self):
+        try:
+            inventory = collect_system_inventory()
+            self.last_inventory = inventory
+            rows = []
+
+            for item in inventory.get("software", []):
+                rows.append(("Software", item.get("name", ""), item.get("version", ""), item.get("publisher", item.get("manager", ""))))
+            for item in inventory.get("updates", []):
+                rows.append(("Update", item.get("id", item.get("package", "")), item.get("installed_on", item.get("candidate", "")), item.get("description", "")))
+            for item in inventory.get("users", []):
+                rows.append(("User", item.get("name", ""), item.get("enabled", item.get("uid", "")), item.get("primary_group", item.get("shell", ""))))
+            for item in inventory.get("services", []):
+                rows.append(("Service", item.get("name", item.get("unit", "")), item.get("status", item.get("active", "")), item.get("display_name", item.get("description", ""))))
+            for item in inventory.get("listening_ports", []):
+                rows.append(("Listening port", item.get("LocalPort", item.get("local_endpoint", "")), item.get("state", ""), item.get("LocalAddress", item.get("protocol", ""))))
+
+            self.inventory_table.setRowCount(min(len(rows), 500))
+            for row_index, values in enumerate(rows[:500]):
+                for column, value in enumerate(values):
+                    cell = QTableWidgetItem(str(value))
+                    cell.setToolTip(str(value))
+                    self.inventory_table.setItem(row_index, column, cell)
+
+            counts = {
+                "software": len(inventory.get("software", [])),
+                "updates": len(inventory.get("updates", [])),
+                "users": len(inventory.get("users", [])),
+                "services": len(inventory.get("services", [])),
+                "listening_ports": len(inventory.get("listening_ports", [])),
+            }
+            errors = inventory.get("collection_errors", [])
+            self.inventory_summary.setText(
+                "Inventory completed | "
+                + " | ".join(f"{key.replace('_', ' ').title()}: {value}" for key, value in counts.items())
+                + f" | Collection errors: {len(errors)}"
+                + (" | " + "; ".join(f"{e['section']}: {e['error']}" for e in errors) if errors else "")
+                + (" | Display limited to 500 rows." if len(rows) > 500 else "")
+            )
+            self.statusBar().showMessage("System inventory collection completed.")
+        except Exception as error:
+            self.inventory_summary.setText(f"Inventory error: {error}")
+            self.statusBar().showMessage("System inventory collection failed.")
 
     def refresh_system_information(self):
         information = identify_platform()
