@@ -1,0 +1,176 @@
+"""Evidence-based, read-only security configuration checks.
+
+The engine deliberately distinguishes observable configuration from policy
+judgements that require administrator intent or vendor security metadata.
+"""
+from __future__ import annotations
+
+import platform as host_platform
+from typing import Any
+
+from securestate.models import AssessmentResult, CheckStatus
+
+
+def _result(check_id: str, control: str, os_name: str, status: CheckStatus,
+            summary: str, evidence: str, recommendation: str) -> AssessmentResult:
+    return AssessmentResult.create(
+        check_id=check_id,
+        control=control,
+        platform=os_name,
+        status=status,
+        summary=summary,
+        evidence=evidence,
+        recommendation=recommendation,
+    )
+
+
+def _is_wildcard_listener(item: dict[str, Any]) -> bool:
+    address = str(item.get("LocalAddress", item.get("local_address", ""))).strip()
+    endpoint = str(item.get("local_endpoint", "")).strip()
+    if endpoint:
+        # ss commonly emits 0.0.0.0:PORT, *:PORT, [::]:PORT and :::PORT.
+        host = endpoint.rsplit(":", 1)[0].strip("[]")
+        if host in {"*", "0.0.0.0", "::", ""}:
+            return True
+        return False
+    return address in {"0.0.0.0", "::", "*"}
+
+
+def _is_loopback_listener(item: dict[str, Any]) -> bool:
+    address = str(item.get("LocalAddress", item.get("local_address", ""))).strip()
+    endpoint = str(item.get("local_endpoint", "")).strip()
+    if endpoint:
+        host = endpoint.rsplit(":", 1)[0].strip("[]")
+        return host == "127.0.0.1" or host.lower() == "::1" or host.startswith("127.")
+    return address == "::1" or address.startswith("127.")
+
+
+def assess_security_configuration(
+    inventory: dict[str, Any],
+    os_name: str | None = None,
+) -> list[AssessmentResult]:
+    """Evaluate observable inventory facts without changing the host."""
+    os_name = os_name or inventory.get("system", {}).get("operating_system") or host_platform.system()
+    errors = {entry.get("section") for entry in inventory.get("collection_errors", [])}
+    results: list[AssessmentResult] = []
+
+    # Privileged identity integrity: Linux UID 0 is an objective OS privilege.
+    if os_name == "Linux":
+        if "users" in errors:
+            results.append(_result(
+                "ID-LINUX-001", "Root identity uniqueness", os_name,
+                CheckStatus.UNKNOWN, "Root identity could not be evaluated.",
+                "Local account collection failed.",
+                "Retry account collection with sufficient read permissions.",
+            ))
+        else:
+            root_accounts = [u for u in inventory.get("users", []) if u.get("uid") == 0]
+            unexpected = [u.get("name", "<unnamed>") for u in root_accounts if u.get("name") != "root"]
+            if unexpected:
+                results.append(_result(
+                    "ID-LINUX-001", "Root identity uniqueness", os_name,
+                    CheckStatus.FAIL,
+                    "Additional account names have UID 0.",
+                    "UID 0 accounts: " + ", ".join(
+                        str(u.get("name", "<unnamed>")) for u in root_accounts
+                    ),
+                    "Confirm whether each additional UID 0 account is required; remove unintended UID 0 assignments.",
+                ))
+            elif root_accounts:
+                results.append(_result(
+                    "ID-LINUX-001", "Root identity uniqueness", os_name,
+                    CheckStatus.PASS, "Only the root account has UID 0.",
+                    "Exactly one UID 0 account named root was observed.",
+                    "Continue monitoring privileged account changes.",
+                ))
+            else:
+                results.append(_result(
+                    "ID-LINUX-001", "Root identity uniqueness", os_name,
+                    CheckStatus.UNKNOWN, "No UID 0 account was returned.",
+                    "The account inventory did not contain a root identity.",
+                    "Verify account collection completeness and inspect /etc/passwd.",
+                ))
+    elif os_name == "Windows":
+        results.append(_result(
+            "ID-WIN-001", "Local account privilege review", os_name,
+            CheckStatus.UNKNOWN,
+            "Local account state was collected, but administrative membership was not.",
+            f"{len(inventory.get('users', []))} local account records collected; Administrators group membership is not part of this inventory.",
+            "Collect local group membership and review enabled accounts in the Administrators group.",
+        ))
+
+    # Listening sockets: wildcard binds indicate broad interface exposure, not
+    # proof of remote reachability or a vulnerability.
+    if "listening_ports" in errors:
+        results.append(_result(
+            "NET-LISTEN-001", "Listening interface exposure", os_name,
+            CheckStatus.UNKNOWN, "Listening endpoints could not be evaluated.",
+            "Listening-port collection failed.",
+            "Retry endpoint collection and correlate listeners with process ownership and firewall policy.",
+        ))
+    else:
+        listeners = inventory.get("listening_ports", [])
+        wildcard = [item for item in listeners if _is_wildcard_listener(item)]
+        loopback = [item for item in listeners if _is_loopback_listener(item)]
+        if wildcard:
+            results.append(_result(
+                "NET-LISTEN-001", "Listening interface exposure", os_name,
+                CheckStatus.UNKNOWN,
+                f"{len(wildcard)} listener(s) bind to wildcard interfaces.",
+                f"{len(listeners)} listening endpoints observed; {len(wildcard)} wildcard-bound and {len(loopback)} loopback-bound.",
+                "Identify each owning process, confirm intended network access, and validate reachability against host firewall rules.",
+            ))
+        elif listeners:
+            results.append(_result(
+                "NET-LISTEN-001", "Listening interface exposure", os_name,
+                CheckStatus.PASS,
+                "No wildcard-bound listening endpoints were observed.",
+                f"{len(listeners)} listening endpoints observed; {len(loopback)} were loopback-bound.",
+                "Continue reviewing new listeners and validate application-specific exposure requirements.",
+            ))
+        else:
+            results.append(_result(
+                "NET-LISTEN-001", "Listening interface exposure", os_name,
+                CheckStatus.PASS, "No listening endpoints were returned.",
+                "The listener collection completed and returned zero records.",
+                "Repeat the check periodically; an empty result is only a point-in-time observation.",
+            ))
+
+    # Services cannot be judged unnecessary from state alone.
+    if "services" in errors:
+        service_status = CheckStatus.UNKNOWN
+        service_evidence = "Service collection failed."
+        service_summary = "Service configuration could not be reviewed."
+    else:
+        services = inventory.get("services", [])
+        service_status = CheckStatus.UNKNOWN
+        service_evidence = f"{len(services)} service records collected; business purpose and approved baseline are not known."
+        service_summary = "Service inventory requires policy and ownership review."
+    results.append(_result(
+        "SVC-REVIEW-001", "Service necessity review", os_name,
+        service_status, service_summary, service_evidence,
+        "Map running services to owners and business requirements; disable only services confirmed unnecessary through an approved change.",
+    ))
+
+    # Patch inventory has different semantics on Windows and Linux. Do not
+    # treat installed Windows hotfixes as pending updates.
+    if "updates" in errors:
+        patch_status = CheckStatus.UNKNOWN
+        patch_summary = "Update state could not be collected."
+        patch_evidence = "Update collection failed."
+    elif os_name == "Windows":
+        patch_status = CheckStatus.UNKNOWN
+        patch_summary = "Installed hotfixes were inventoried; pending update state is not available."
+        patch_evidence = f"{len(inventory.get('updates', []))} installed hotfix records returned by Get-HotFix."
+    else:
+        pending = inventory.get("updates", [])
+        patch_status = CheckStatus.UNKNOWN
+        patch_summary = f"{len(pending)} update candidate(s) were listed; security relevance is not yet classified."
+        patch_evidence = f"{len(pending)} package update candidates returned by the configured package manager."
+    results.append(_result(
+        "PATCH-STATE-001", "Patch state review", os_name,
+        patch_status, patch_summary, patch_evidence,
+        "Correlate update candidates with vendor security advisories and confirm installation state before assigning vulnerability severity.",
+    ))
+
+    return results
