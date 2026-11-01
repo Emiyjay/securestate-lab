@@ -51,6 +51,33 @@ class TestInventoryHelpers(unittest.TestCase):
         self.assertEqual(result["collection_errors"][0]["section"], "software")
         self.assertEqual(result["users"], [])
 
+    @patch("securestate.discovery.shutil.which", return_value="/usr/bin/ss")
+    @patch("securestate.discovery._run")
+    def test_linux_ports_parse_process_owner(self, run_mock, _which):
+        run_mock.return_value = type("Result", (), {
+            "returncode": 0,
+            "stdout": 'tcp LISTEN 0 128 0.0.0.0:8080 0.0.0.0:* users:(("python3",pid=4321,fd=5))\\n',
+            "stderr": "",
+        })()
+        result = discovery._linux_ports()
+        self.assertEqual(result[0]["process_name"], "python3")
+        self.assertEqual(result[0]["process_id"], 4321)
+        self.assertTrue(result[0]["process_metadata_available"])
+
+    @patch("securestate.discovery.grp")
+    @patch("securestate.discovery.pwd")
+    def test_linux_privileged_group_members_include_primary_group_users(self, pwd_mock, grp_mock):
+        grp_mock.getgrnam.side_effect = lambda name: (
+            type("Group", (), {"gr_mem": ["alice"], "gr_gid": 27})()
+            if name == "sudo" else (_ for _ in ()).throw(KeyError(name))
+        )
+        pwd_mock.getpwall.return_value = [
+            type("Account", (), {"pw_name": "bob", "pw_gid": 27})()
+        ]
+        result = discovery._linux_privileged_group_members()
+        self.assertEqual({item["name"] for item in result}, {"alice", "bob"})
+        self.assertTrue(all(item["group"] == "sudo" for item in result))
+
 
 if __name__ == "__main__":
     unittest.main()
