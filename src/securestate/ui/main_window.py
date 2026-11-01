@@ -21,6 +21,7 @@ from securestate.assessments.security_configuration import assess_security_confi
 from securestate.assessments.windows_firewall import (
     assess_windows_firewall,
 )
+from securestate.vulnerability_intelligence import assess_package_vulnerabilities
 
 
 class MainWindow(QMainWindow):
@@ -35,6 +36,7 @@ class MainWindow(QMainWindow):
         self.navigation_buttons = []
         self.system_info_labels = {}
         self.last_inventory = None
+        self.last_vulnerability_results = None
 
         self.create_interface()
 
@@ -136,9 +138,12 @@ class MainWindow(QMainWindow):
         ]
 
         for name, description in page_data:
-            self.pages.addWidget(
-                self.create_placeholder_page(name, description)
-            )
+            if name == "Vulnerability Intelligence":
+                self.pages.addWidget(self.create_vulnerability_page())
+            else:
+                self.pages.addWidget(
+                    self.create_placeholder_page(name, description)
+                )
 
         content_layout.addWidget(self.pages)
 
@@ -698,6 +703,103 @@ class MainWindow(QMainWindow):
         finally:
             self.configuration_button.setEnabled(True)
             self.configuration_button.setText("Run Security Configuration Assessment")
+
+    def create_vulnerability_page(self):
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setAlignment(Qt.AlignmentFlag.AlignTop)
+        layout.setContentsMargins(0, 10, 0, 0)
+        layout.setSpacing(16)
+
+        description = QLabel(
+            "Query installed package versions against OSV and enrich matching CVEs with CISA Known Exploited Vulnerabilities data."
+        )
+        description.setObjectName("muted_text")
+        description.setWordWrap(True)
+        layout.addWidget(description)
+
+        self.vulnerability_button = QPushButton("Run Package Vulnerability Assessment")
+        self.vulnerability_button.setObjectName("action_button")
+        self.vulnerability_button.clicked.connect(self.run_vulnerability_assessment)
+        layout.addWidget(self.vulnerability_button)
+
+        self.vulnerability_summary = QLabel(
+            "Collect Full System Inventory before running vulnerability intelligence."
+        )
+        self.vulnerability_summary.setObjectName("muted_text")
+        self.vulnerability_summary.setWordWrap(True)
+        layout.addWidget(self.vulnerability_summary)
+
+        self.vulnerability_table = QTableWidget(0, 7)
+        self.vulnerability_table.setHorizontalHeaderLabels([
+            "Package", "Installed Version", "Vulnerability ID",
+            "Classification", "CISA KEV", "Sources", "Summary",
+        ])
+        self.vulnerability_table.horizontalHeader().setSectionResizeMode(
+            QHeaderView.ResizeMode.ResizeToContents
+        )
+        self.vulnerability_table.horizontalHeader().setStretchLastSection(True)
+        self.vulnerability_table.setWordWrap(True)
+        self.vulnerability_table.setMinimumHeight(300)
+        self.vulnerability_table.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        layout.addWidget(self.vulnerability_table, 1)
+
+        note = QLabel(
+            "A package/version match is a candidate finding, not proof of exploitability. "
+            "Validate vendor advisories, distribution backports, installed build details and runtime exposure."
+        )
+        note.setObjectName("muted_text")
+        note.setWordWrap(True)
+        layout.addWidget(note)
+        return page
+
+    def run_vulnerability_assessment(self):
+        if not self.last_inventory:
+            self.vulnerability_summary.setText(
+                "No inventory available. Open System Discovery and run Full System Inventory first."
+            )
+            return
+
+        self.vulnerability_button.setEnabled(False)
+        self.vulnerability_button.setText("Querying Vulnerability Sources...")
+        self.vulnerability_summary.setText("Querying OSV and CISA KEV. This may take a short while.")
+        try:
+            software = self.last_inventory.get("software", [])
+            result = assess_package_vulnerabilities(software)
+            self.last_vulnerability_results = result
+            findings = result.get("findings", [])
+            self.vulnerability_table.setRowCount(len(findings))
+            for row, finding in enumerate(findings):
+                values = [
+                    finding.get("package", ""),
+                    finding.get("version", ""),
+                    ", ".join(finding.get("cve_ids", [])) or finding.get("vulnerability_id", ""),
+                    finding.get("classification", ""),
+                    "YES" if finding.get("known_exploited") else "No",
+                    ", ".join(finding.get("sources", [])),
+                    finding.get("summary", ""),
+                ]
+                for column, value in enumerate(values):
+                    cell = QTableWidgetItem(str(value))
+                    cell.setToolTip(str(value))
+                    self.vulnerability_table.setItem(row, column, cell)
+
+            errors = result.get("source_errors", [])
+            self.vulnerability_summary.setText(
+                f"Assessment completed | Packages queried: {result.get('queried_packages', 0)}"
+                f" | Unsupported inventory records: {result.get('unsupported_records', 0)}"
+                f" | Candidate findings: {len(findings)}"
+                f" | CISA KEV matches: {sum(1 for item in findings if item.get('known_exploited'))}"
+                f" | Source errors: {len(errors)}"
+                + (" | " + "; ".join(f"{item['source']}: {item['error']}" for item in errors) if errors else "")
+            )
+            self.statusBar().showMessage("Vulnerability intelligence query completed.")
+        except Exception as error:
+            self.vulnerability_summary.setText(f"Vulnerability intelligence error: {error}")
+            self.statusBar().showMessage("Vulnerability intelligence query failed.")
+        finally:
+            self.vulnerability_button.setEnabled(True)
+            self.vulnerability_button.setText("Run Package Vulnerability Assessment")
 
     def create_placeholder_page(self, title, description):
         page = QWidget()
