@@ -26,7 +26,7 @@ To design and experimentally evaluate a cross-platform operating system security
 | Component | Technology |
 |---|---|
 | Programming language | Python |
-| Desktop interface | PySide6 (planned) |
+| Desktop interface | PySide6 |
 | Windows assessment | PowerShell and native OS interfaces |
 | Linux assessment | Native Linux utilities |
 | Data storage | SQLite (planned) |
@@ -44,12 +44,13 @@ Implemented research prototype capabilities:
 - Linux sudo/wheel membership and TCP/UDP listener process attribution where permissions allow.
 - Structured assessment results and evidence-backed security configuration checks.
 - Independent Windows Defender Firewall profile assessment.
-- OSV package/version vulnerability queries with CISA KEV enrichment.
-- PySide6 desktop interface with separate discovery, configuration and vulnerability intelligence workflows.
+- OSV package/version vulnerability queries with CISA KEV enrichment for supported package ecosystems.
+- Conservative Windows installed-product screening against exact normalised vendor/product entries in the CISA KEV catalogue.
+- PySide6 desktop interface with separate discovery, configuration, package vulnerability and Windows product screening workflows.
 
 The vulnerability intelligence module currently queries package records that can be mapped to an OSV ecosystem. OSV matches are classified as `VALIDATION_REQUIRED`, not confirmed host vulnerabilities. CISA KEV membership indicates known exploitation of a CVE, not proof that the installed host is affected. Distribution backports and vendor-specific package revisions require additional validation.
 
-Windows installed-software records and RPM inventory are not yet fully mapped to OSV ecosystems. NVD enrichment, vendor advisory correlation, persistent finding history, controlled remediation and independent before/after verification remain future implementation stages.
+Windows installed-software records and RPM inventory are not yet fully mapped to OSV ecosystems. The Windows product screening workflow uses exact normalised publisher/vendor and product-name matches against CISA KEV records; it is catalogue screening only and does not establish installed-version applicability. Every match requires vendor version/build validation. This conservative screening can miss products whose registry display names differ from catalogue naming. CPE-based NVD enrichment, broader vendor advisory correlation, persistent finding history, controlled remediation and independent before/after verification remain future implementation stages.
 
 Automated tests must be run in the target environment; mocked Linux tests do not replace a real Linux VM experiment.
 
