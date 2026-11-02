@@ -121,3 +121,7 @@ Development follows an incremental process:
 **Status:** Early development — research prototype.
 
 This repository is actively being developed as part of an academic cybersecurity research project.
+
+### NVD request handling
+
+NVD GET responses are cached in the current user's application cache directory (`%LOCALAPPDATA%\\SecureStateLab\\nvd` on Windows, or `~/.cache/SecureStateLab/nvd` elsewhere). Unauthenticated NVD requests are paced conservatively and HTTP 429 responses are retried with exponential backoff, respecting `Retry-After` when provided. To use an NVD API key, set the `NVD_API_KEY` environment variable before launching SecureState Lab; do not commit the key to Git or place it in source files. Cached responses may be reused on subsequent assessments. Cache entries are not currently automatically expired, so refresh/delete the local NVD cache when you need to force a fresh lookup. Requests run synchronously in the current GUI implementation and may take time on a large inventory.
