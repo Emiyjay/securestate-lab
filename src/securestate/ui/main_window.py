@@ -24,6 +24,7 @@ from securestate.assessments.windows_firewall import (
 from securestate.vulnerability_intelligence import (
     assess_package_vulnerabilities,
     screen_windows_products_against_kev,
+    enrich_windows_kev_matches_with_nvd,
 )
 
 
@@ -751,6 +752,31 @@ class MainWindow(QMainWindow):
         self.windows_product_table.setMinimumHeight(220)
         layout.addWidget(self.windows_product_table)
 
+        self.nvd_button = QPushButton("Enrich KEV Matches with NVD CPE/CVE Data")
+        self.nvd_button.setObjectName("action_button")
+        self.nvd_button.clicked.connect(self.run_nvd_enrichment)
+        layout.addWidget(self.nvd_button)
+
+        self.nvd_summary = QLabel(
+            "Run Windows product screening first. NVD enrichment uses only its KEV product matches."
+        )
+        self.nvd_summary.setObjectName("muted_text")
+        self.nvd_summary.setWordWrap(True)
+        layout.addWidget(self.nvd_summary)
+
+        self.nvd_table = QTableWidget(0, 6)
+        self.nvd_table.setHorizontalHeaderLabels([
+            "Installed Product", "Version", "CVE", "NVD Status",
+            "Vulnerability Status", "Description",
+        ])
+        self.nvd_table.horizontalHeader().setSectionResizeMode(
+            QHeaderView.ResizeMode.ResizeToContents
+        )
+        self.nvd_table.horizontalHeader().setStretchLastSection(True)
+        self.nvd_table.setWordWrap(True)
+        self.nvd_table.setMinimumHeight(220)
+        layout.addWidget(self.nvd_table)
+
         self.vulnerability_summary = QLabel(
             "Collect Full System Inventory before running vulnerability intelligence."
         )
@@ -780,6 +806,75 @@ class MainWindow(QMainWindow):
         note.setWordWrap(True)
         layout.addWidget(note)
         return page
+
+    def run_nvd_enrichment(self):
+        if not self.last_inventory:
+            self.nvd_summary.setText("Run Full System Inventory first.")
+            return
+        if self.last_inventory.get("system", {}).get("operating_system", "") != "Windows":
+            self.nvd_summary.setText("NVD product enrichment currently requires Windows product inventory.")
+            return
+        if self.windows_product_table.rowCount() == 0:
+            self.nvd_summary.setText("Run Windows product screening first and obtain at least one KEV match.")
+            return
+
+        kev_matches = []
+        for row in range(self.windows_product_table.rowCount()):
+            kev_matches.append({
+                "product": self.windows_product_table.item(row, 0).text(),
+                "installed_version": self.windows_product_table.item(row, 1).text(),
+                "publisher": self.windows_product_table.item(row, 2).text(),
+                "cve_id": self.windows_product_table.item(row, 3).text(),
+            })
+
+        self.nvd_button.setEnabled(False)
+        self.nvd_button.setText("Querying NVD...")
+        self.nvd_summary.setText("Searching NVD CPE records and installed-version CVE applicability. This may take time.")
+        try:
+            result = enrich_windows_kev_matches_with_nvd(kev_matches)
+            rows = []
+            for product in result.get("matches", []):
+                candidates = product.get("nvd_candidates", [])
+                if not candidates:
+                    rows.append((
+                        product.get("product", ""),
+                        product.get("installed_version", ""),
+                        "",
+                        product.get("nvd_status", ""),
+                        "",
+                        "",
+                    ))
+                for candidate in candidates:
+                    rows.append((
+                        product.get("product", ""),
+                        product.get("installed_version", ""),
+                        candidate.get("cve_id", ""),
+                        product.get("nvd_status", ""),
+                        candidate.get("vuln_status", ""),
+                        candidate.get("description", ""),
+                    ))
+            self.nvd_table.setRowCount(len(rows))
+            for row, values in enumerate(rows):
+                for column, value in enumerate(values):
+                    cell = QTableWidgetItem(str(value))
+                    cell.setToolTip(str(value))
+                    self.nvd_table.setItem(row, column, cell)
+
+            errors = result.get("source_errors", [])
+            self.nvd_summary.setText(
+                f"Status: {result.get('status')} | Products queried: {result.get('products_queried', 0)}"
+                f" | Exact CPE candidates: {result.get('cpe_candidates', 0)}"
+                f" | CVE candidates: {result.get('cve_candidates', 0)}"
+                f" | Source errors: {len(errors)}"
+                + (" | " + "; ".join(item.get("error", "") for item in errors) if errors else "")
+                + " | All NVD results require manual version/configuration validation."
+            )
+            self.statusBar().showMessage("NVD CPE/CVE enrichment completed.")
+        except Exception as error:
+            self.nvd_summary.setText(f"NVD enrichment error: {error}")
+        finally:
+            self.nvd_button.setEnabled(True)
+            self.nvd_button.setText("Enrich KEV Matches with NVD CPE/CVE Data")
 
     def run_vulnerability_assessment(self):
         if not self.last_inventory:
