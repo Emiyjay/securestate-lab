@@ -21,7 +21,10 @@ from securestate.assessments.security_configuration import assess_security_confi
 from securestate.assessments.windows_firewall import (
     assess_windows_firewall,
 )
-from securestate.vulnerability_intelligence import (\n    assess_package_vulnerabilities,\n    screen_windows_products_against_kev,\n)
+from securestate.vulnerability_intelligence import (
+    assess_package_vulnerabilities,
+    screen_windows_products_against_kev,
+)
 
 
 class MainWindow(QMainWindow):
