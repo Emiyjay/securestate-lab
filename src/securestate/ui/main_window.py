@@ -21,7 +21,7 @@ from securestate.assessments.security_configuration import assess_security_confi
 from securestate.assessments.windows_firewall import (
     assess_windows_firewall,
 )
-from securestate.vulnerability_intelligence import assess_package_vulnerabilities
+from securestate.vulnerability_intelligence import (\n    assess_package_vulnerabilities,\n    screen_windows_products_against_kev,\n)
 
 
 class MainWindow(QMainWindow):
@@ -723,6 +723,31 @@ class MainWindow(QMainWindow):
         self.vulnerability_button.clicked.connect(self.run_vulnerability_assessment)
         layout.addWidget(self.vulnerability_button)
 
+        self.windows_product_button = QPushButton("Screen Windows Products Against CISA KEV")
+        self.windows_product_button.setObjectName("action_button")
+        self.windows_product_button.clicked.connect(self.run_windows_product_screening)
+        layout.addWidget(self.windows_product_button)
+
+        self.windows_product_summary = QLabel(
+            "Windows product screening is a separate catalogue check; it does not confirm version applicability."
+        )
+        self.windows_product_summary.setObjectName("muted_text")
+        self.windows_product_summary.setWordWrap(True)
+        layout.addWidget(self.windows_product_summary)
+
+        self.windows_product_table = QTableWidget(0, 7)
+        self.windows_product_table.setHorizontalHeaderLabels([
+            "Installed Product", "Version", "Publisher", "CVE",
+            "KEV Product", "Classification", "Validation Note",
+        ])
+        self.windows_product_table.horizontalHeader().setSectionResizeMode(
+            QHeaderView.ResizeMode.ResizeToContents
+        )
+        self.windows_product_table.horizontalHeader().setStretchLastSection(True)
+        self.windows_product_table.setWordWrap(True)
+        self.windows_product_table.setMinimumHeight(220)
+        layout.addWidget(self.windows_product_table)
+
         self.vulnerability_summary = QLabel(
             "Collect Full System Inventory before running vulnerability intelligence."
         )
@@ -816,6 +841,59 @@ class MainWindow(QMainWindow):
         finally:
             self.vulnerability_button.setEnabled(True)
             self.vulnerability_button.setText("Run Package Vulnerability Assessment")
+
+    def run_windows_product_screening(self):
+        if not self.last_inventory:
+            self.windows_product_summary.setText(
+                "No inventory available. Run Full System Inventory first."
+            )
+            return
+
+        system_name = self.last_inventory.get("system", {}).get("operating_system", "")
+        if system_name != "Windows":
+            self.windows_product_summary.setText(
+                "This screening currently supports Windows registry software inventory only."
+            )
+            return
+
+        self.windows_product_button.setEnabled(False)
+        self.windows_product_button.setText("Screening Windows Products...")
+        try:
+            result = screen_windows_products_against_kev(
+                self.last_inventory.get("software", [])
+            )
+            matches = result.get("matches", [])
+            self.windows_product_table.setRowCount(len(matches))
+            for row, match in enumerate(matches):
+                values = [
+                    match.get("product", ""),
+                    match.get("installed_version", ""),
+                    match.get("publisher", ""),
+                    match.get("cve_id", ""),
+                    match.get("catalogue_product", ""),
+                    match.get("classification", ""),
+                    match.get("assessment_note", ""),
+                ]
+                for column, value in enumerate(values):
+                    cell = QTableWidgetItem(str(value))
+                    cell.setToolTip(str(value))
+                    self.windows_product_table.setItem(row, column, cell)
+
+            errors = result.get("source_errors", [])
+            self.windows_product_summary.setText(
+                f"Status: {result.get('status')} | Products screened: {result.get('products_screened', 0)}"
+                f" | Exact catalogue matches: {len(matches)}"
+                f" | Unsupported records: {result.get('unsupported_records', 0)}"
+                f" | CISA KEV catalogue entries: {result.get('kev_catalogue_entries', 'Unavailable')}"
+                f" | Source errors: {len(errors)}"
+                + (" | " + "; ".join(item["error"] for item in errors) if errors else "")
+            )
+            self.statusBar().showMessage("Windows product catalogue screening completed.")
+        except Exception as error:
+            self.windows_product_summary.setText(f"Windows product screening error: {error}")
+        finally:
+            self.windows_product_button.setEnabled(True)
+            self.windows_product_button.setText("Screen Windows Products Against CISA KEV")
 
     def create_placeholder_page(self, title, description):
         page = QWidget()
