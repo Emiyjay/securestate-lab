@@ -785,11 +785,27 @@ class MainWindow(QMainWindow):
                     self.vulnerability_table.setItem(row, column, cell)
 
             errors = result.get("source_errors", [])
+            kev_status = result.get("kev_correlation_status", "UNKNOWN")
+            kev_count = result.get("kev_catalogue_entries")
+            if kev_status == "EVALUATED":
+                kev_text = f"CISA KEV catalogue entries: {kev_count}"
+            elif kev_status == "NOT_EVALUATED_NO_SUPPORTED_PACKAGES":
+                kev_text = "CISA KEV correlation: not evaluated"
+            else:
+                kev_text = "CISA KEV catalogue: unavailable"
+            unsupported_reasons = {}
+            for item in result.get("unsupported_details", []):
+                reason = item.get("reason", "unknown")
+                unsupported_reasons[reason] = unsupported_reasons.get(reason, 0) + 1
+            reason_text = ", ".join(
+                f"{key}: {value}" for key, value in sorted(unsupported_reasons.items())
+            ) or "none"
             self.vulnerability_summary.setText(
                 f"Assessment completed | Packages queried: {result.get('queried_packages', 0)}"
-                f" | Unsupported inventory records: {result.get('unsupported_records', 0)}"
+                f" | Unsupported inventory records: {result.get('unsupported_records', 0)} ({reason_text})"
                 f" | Candidate findings: {len(findings)}"
-                f" | CISA KEV matches: {sum(1 for item in findings if item.get('known_exploited'))}"
+                f" | KEV-linked findings: {sum(1 for item in findings if item.get('known_exploited'))}"
+                f" | {kev_text}"
                 f" | Source errors: {len(errors)}"
                 + (" | " + "; ".join(f"{item['source']}: {item['error']}" for item in errors) if errors else "")
             )
