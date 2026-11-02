@@ -1,3 +1,6 @@
+import json
+from datetime import datetime, timezone
+
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QFrame,
@@ -13,9 +16,13 @@ from PySide6.QtWidgets import (
     QTableWidgetItem,
     QHeaderView,
     QScrollArea,
+    QComboBox,
+    QFileDialog,
+    QMessageBox,
 )
 
 from securestate.platform_info import identify_platform
+from securestate.simulation import get_scenarios, assess_scenario
 from securestate.discovery import collect_system_inventory
 from securestate.assessments.security_configuration import assess_security_configuration
 from securestate.assessments.windows_firewall import (
@@ -79,6 +86,7 @@ class MainWindow(QMainWindow):
             "Remediation",
             "Verification",
             "Reports",
+            "Simulation Lab",
         ]
 
         for index, name in enumerate(navigation_items):
@@ -140,11 +148,17 @@ class MainWindow(QMainWindow):
                 "Reports",
                 "Review assessment evidence and generate reports.",
             ),
+            (
+                "Simulation Lab",
+                "Run repeatable Windows and Linux security-control demonstrations.",
+            ),
         ]
 
         for name, description in page_data:
             if name == "Vulnerability Intelligence":
                 self.pages.addWidget(self.create_vulnerability_page())
+            elif name == "Simulation Lab":
+                self.pages.addWidget(self.create_simulation_page())
             else:
                 self.pages.addWidget(
                     self.create_placeholder_page(name, description)
@@ -985,6 +999,115 @@ class MainWindow(QMainWindow):
             self.windows_product_button.setEnabled(True)
             self.windows_product_button.setText("Screen Windows Products Against CISA KEV")
 
+    def create_simulation_page(self):
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setAlignment(Qt.AlignmentFlag.AlignTop)
+        layout.setContentsMargins(0, 12, 0, 0)
+        layout.setSpacing(16)
+
+        notice = QLabel(
+            "SIMULATION ONLY — Fixed demonstration data. "
+            "No host settings are inspected or changed."
+        )
+        notice.setWordWrap(True)
+        notice.setStyleSheet(
+            "background:#fff7ed;color:#9a3412;padding:14px;"
+            "border:1px solid #fed7aa;border-radius:8px;font-weight:bold;"
+        )
+        layout.addWidget(notice)
+
+        controls = QFrame()
+        controls.setObjectName("section_card")
+        form = QGridLayout(controls)
+        form.setContentsMargins(20, 20, 20, 20)
+        form.addWidget(QLabel("Operating system"), 0, 0)
+        self.sim_platform = QComboBox()
+        self.sim_platform.addItems(["Windows", "Linux"])
+        form.addWidget(self.sim_platform, 0, 1)
+        form.addWidget(QLabel("Scenario"), 1, 0)
+        self.sim_scenario = QComboBox()
+        form.addWidget(self.sim_scenario, 1, 1)
+
+        baseline = QPushButton("Run Baseline")
+        baseline.clicked.connect(lambda: self.run_simulation(False))
+        remediate = QPushButton("Simulate Remediation")
+        remediate.clicked.connect(lambda: self.run_simulation(True))
+        export = QPushButton("Export JSON Report")
+        export.clicked.connect(self.export_simulation_report)
+        form.addWidget(baseline, 2, 0)
+        form.addWidget(remediate, 2, 1)
+        form.addWidget(export, 3, 0, 1, 2)
+        layout.addWidget(controls)
+
+        self.sim_result_label = QLabel("Select a scenario and run the baseline.")
+        self.sim_result_label.setObjectName("card_title")
+        self.sim_result_label.setWordWrap(True)
+        layout.addWidget(self.sim_result_label)
+
+        self.sim_results_table = QTableWidget(0, 3)
+        self.sim_results_table.setHorizontalHeaderLabels(["Stage", "Status", "Evidence"])
+        self.sim_results_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        self.sim_results_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
+        self.sim_results_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
+        self.sim_results_table.setMinimumHeight(250)
+        layout.addWidget(self.sim_results_table)
+
+        self.simulation_history = []
+        self.sim_platform.currentTextChanged.connect(self.refresh_simulation_scenarios)
+        self.refresh_simulation_scenarios("Windows")
+        return page
+
+    def refresh_simulation_scenarios(self, platform):
+        self.sim_scenario.clear()
+        for scenario in get_scenarios(platform):
+            self.sim_scenario.addItem(
+                scenario["id"] + " — " + scenario["control"],
+                scenario["id"],
+            )
+        self.sim_results_table.setRowCount(0)
+        self.sim_result_label.setText("Choose a scenario and run its baseline.")
+
+    def run_simulation(self, remediated):
+        platform = self.sim_platform.currentText()
+        scenario_id = self.sim_scenario.currentData()
+        if not scenario_id:
+            return
+        result = assess_scenario(platform, scenario_id, remediated)
+        self.simulation_history.append(result)
+        row = self.sim_results_table.rowCount()
+        self.sim_results_table.insertRow(row)
+        stage = "Simulated remediation" if remediated else "Baseline"
+        for column, value in enumerate([stage, result["status"], result["evidence"]]):
+            self.sim_results_table.setItem(row, column, QTableWidgetItem(str(value)))
+        self.sim_result_label.setText(
+            result["scenario_id"] + " | " + platform + " | "
+            + result["control"] + " | " + result["status"]
+            + " | SIMULATION ONLY"
+        )
+        self.statusBar().showMessage("Simulation completed: " + scenario_id)
+
+    def export_simulation_report(self):
+        if not self.simulation_history:
+            QMessageBox.information(self, "No results", "Run a simulation before exporting.")
+            return
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Save simulation report", "securestate_simulation_report.json",
+            "JSON files (*.json)",
+        )
+        if not path:
+            return
+        report = {
+            "application": "SecureState Lab",
+            "mode": "SIMULATION ONLY",
+            "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+            "notice": "Fixed demonstration fixtures, not real host findings.",
+            "results": self.simulation_history,
+        }
+        with open(path, "w", encoding="utf-8") as output:
+            json.dump(report, output, indent=2)
+        QMessageBox.information(self, "Report exported", "Saved to: " + path)
+
     def create_placeholder_page(self, title, description):
         page = QWidget()
         layout = QVBoxLayout(page)
@@ -1033,6 +1156,7 @@ class MainWindow(QMainWindow):
             "Review and approve controlled security corrections.",
             "Independently verify corrective actions.",
             "Review assessment evidence and generate reports.",
+            "Run offline Windows and Linux security-control simulations.",
         ]
 
         self.page_subtitle.setText(subtitles[index])
