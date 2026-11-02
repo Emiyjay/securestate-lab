@@ -25,6 +25,7 @@ from securestate.vulnerability_intelligence import (
     assess_package_vulnerabilities,
     screen_windows_products_against_kev,
     enrich_windows_kev_matches_with_nvd,
+    assess_windows_products_with_nvd,
 )
 
 
@@ -752,13 +753,13 @@ class MainWindow(QMainWindow):
         self.windows_product_table.setMinimumHeight(220)
         layout.addWidget(self.windows_product_table)
 
-        self.nvd_button = QPushButton("Enrich KEV Matches with NVD CPE/CVE Data")
+        self.nvd_button = QPushButton("Assess All Windows Products with NVD CPE/CVE")
         self.nvd_button.setObjectName("action_button")
         self.nvd_button.clicked.connect(self.run_nvd_enrichment)
         layout.addWidget(self.nvd_button)
 
         self.nvd_summary = QLabel(
-            "Run Windows product screening first. NVD enrichment uses only its KEV product matches."
+            "Assess all inventoried Windows applications against NVD CPE records, independently of KEV name matches."
         )
         self.nvd_summary.setObjectName("muted_text")
         self.nvd_summary.setWordWrap(True)
@@ -814,24 +815,11 @@ class MainWindow(QMainWindow):
         if self.last_inventory.get("system", {}).get("operating_system", "") != "Windows":
             self.nvd_summary.setText("NVD product enrichment currently requires Windows product inventory.")
             return
-        if self.windows_product_table.rowCount() == 0:
-            self.nvd_summary.setText("Run Windows product screening first and obtain at least one KEV match.")
-            return
-
-        kev_matches = []
-        for row in range(self.windows_product_table.rowCount()):
-            kev_matches.append({
-                "product": self.windows_product_table.item(row, 0).text(),
-                "installed_version": self.windows_product_table.item(row, 1).text(),
-                "publisher": self.windows_product_table.item(row, 2).text(),
-                "cve_id": self.windows_product_table.item(row, 3).text(),
-            })
-
         self.nvd_button.setEnabled(False)
         self.nvd_button.setText("Querying NVD...")
-        self.nvd_summary.setText("Searching NVD CPE records and installed-version CVE applicability. This may take time.")
+        self.nvd_summary.setText("Searching NVD CPE records for all inventoried Windows products. This may take time.")
         try:
-            result = enrich_windows_kev_matches_with_nvd(kev_matches)
+            result = assess_windows_products_with_nvd(self.last_inventory.get('software', []))
             rows = []
             for product in result.get("matches", []):
                 candidates = product.get("nvd_candidates", [])
