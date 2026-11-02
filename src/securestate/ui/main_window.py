@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (
 
 from securestate.platform_info import identify_platform
 from securestate.assessments.host_firewall import assess_host_firewall
+from securestate.assessments.security_logging import assess_security_logging
 from securestate.discovery import collect_system_inventory
 from securestate.assessments.security_configuration import assess_security_configuration
 from securestate.assessments.windows_firewall import (
@@ -569,6 +570,31 @@ class MainWindow(QMainWindow):
         card_layout.addWidget(self.firewall_summary)
         card_layout.addWidget(self.firewall_table)
 
+        self.logging_button = QPushButton("Run Security Logging Assessment")
+        self.logging_button.setObjectName("action_button")
+        self.logging_button.clicked.connect(self.run_logging_assessment)
+
+        self.logging_summary = QLabel("No security logging assessment has been performed.")
+        self.logging_summary.setObjectName("muted_text")
+        self.logging_summary.setWordWrap(True)
+
+        self.logging_table = QTableWidget(0, 4)
+        self.logging_table.setHorizontalHeaderLabels([
+            "Security Control", "Status", "Evidence", "Recommendation"
+        ])
+        self.logging_table.horizontalHeader().setSectionResizeMode(
+            QHeaderView.ResizeMode.ResizeToContents
+        )
+        self.logging_table.horizontalHeader().setStretchLastSection(True)
+        self.logging_table.setWordWrap(True)
+        self.logging_table.setMinimumHeight(120)
+        self.logging_table.setMaximumHeight(190)
+        self.logging_table.verticalHeader().setVisible(False)
+
+        card_layout.addWidget(self.logging_button)
+        card_layout.addWidget(self.logging_summary)
+        card_layout.addWidget(self.logging_table)
+
         self.configuration_button = QPushButton("Run Security Configuration Assessment")
         self.configuration_button.setObjectName("action_button")
         self.configuration_button.clicked.connect(self.run_configuration_assessment)
@@ -670,6 +696,34 @@ class MainWindow(QMainWindow):
             self.firewall_button.setText(
                 "Run Firewall Assessment"
             )
+
+    def run_logging_assessment(self):
+        self.logging_button.setEnabled(False)
+        self.logging_button.setText("Assessing Security Logging...")
+        try:
+            results = assess_security_logging()
+            self.logging_table.setRowCount(len(results))
+            for row, result in enumerate(results):
+                values = [
+                    result.control, result.status.value,
+                    result.evidence, result.recommendation,
+                ]
+                for column, value in enumerate(values):
+                    item = QTableWidgetItem(str(value))
+                    item.setToolTip(str(value))
+                    self.logging_table.setItem(row, column, item)
+            result = results[0]
+            self.logging_summary.setText(
+                f"{result.status.value} | {result.summary} | "
+                f"Checked: {result.timestamp_utc}"
+            )
+            self.statusBar().showMessage("Security logging assessment completed.")
+        except Exception as error:
+            self.logging_summary.setText(f"Assessment error: {error}")
+            self.statusBar().showMessage("Security logging assessment failed.")
+        finally:
+            self.logging_button.setEnabled(True)
+            self.logging_button.setText("Run Security Logging Assessment")
 
     def run_configuration_assessment(self):
         if not self.last_inventory:
