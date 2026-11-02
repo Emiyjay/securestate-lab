@@ -806,7 +806,11 @@ class MainWindow(QMainWindow):
         note.setObjectName("muted_text")
         note.setWordWrap(True)
         layout.addWidget(note)
-        return page
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setWidget(page)
+        return scroll
 
     def run_nvd_enrichment(self):
         if not self.last_inventory:
@@ -862,7 +866,7 @@ class MainWindow(QMainWindow):
             self.nvd_summary.setText(f"NVD enrichment error: {error}")
         finally:
             self.nvd_button.setEnabled(True)
-            self.nvd_button.setText("Enrich KEV Matches with NVD CPE/CVE Data")
+            self.nvd_button.setText("Assess All Windows Products with NVD CPE/CVE")
 
     def run_vulnerability_assessment(self):
         if not self.last_inventory:
