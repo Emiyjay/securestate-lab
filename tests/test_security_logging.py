@@ -73,6 +73,20 @@ class TestSecurityLogging(unittest.TestCase):
         self.assertEqual(audit.status, CheckStatus.UNKNOWN)
         self.assertIn("access denied", audit.evidence)
 
+
+    @patch("securestate.assessments.security_logging.shutil.which", return_value="auditpol.exe")
+    @patch("securestate.assessments.security_logging._run")
+    def test_windows_missing_privilege_has_actionable_unknown_message(self, run, _which):
+        run.side_effect = [
+            subprocess.CompletedProcess([], 0, '{"service":"Running","latest_event_id":1,"latest_event_time":"2026-11-03T10:00:00"}', ""),
+            subprocess.CompletedProcess([], 1, "", "Error 0x00000522 occurred"),
+        ]
+        results = assess_security_logging("Windows")
+        audit = next(item for item in results if item.check_id == "LOG-AUDIT-001")
+        self.assertEqual(audit.status, CheckStatus.UNKNOWN)
+        self.assertIn("Run as administrator", audit.evidence)
+        self.assertIn("not a finding", audit.evidence)
+
     def test_unsupported_platform_is_not_applicable(self):
         result = assess_security_logging("FreeBSD")[0]
         self.assertEqual(result.status, CheckStatus.NOT_APPLICABLE)
