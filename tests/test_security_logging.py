@@ -18,6 +18,8 @@ class TestSecurityLogging(unittest.TestCase):
             subprocess.CompletedProcess([], 0, "active\n", ""),
             subprocess.CompletedProcess([], 3, "inactive\n", ""),
             subprocess.CompletedProcess([], 0, "-- Logs begin --\n", ""),
+            subprocess.CompletedProcess([], 0, "active\n", ""),
+            subprocess.CompletedProcess([], 3, "inactive\n", ""),
             subprocess.CompletedProcess([], 0, "enabled 1\n", ""),
         ]
         result = assess_security_logging("Linux")[0]
