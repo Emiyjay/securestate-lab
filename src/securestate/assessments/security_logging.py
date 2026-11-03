@@ -31,7 +31,14 @@ def _assess_audit_configuration(os_name: str) -> AssessmentResult:
                 raise RuntimeError("auditpol was not found.")
             result = _run([executable, "/get", "/category:*", "/r"])
             if result.returncode != 0:
-                raise RuntimeError(result.stderr.strip() or "auditpol query failed.")
+                error_text = (result.stderr or result.stdout).strip()
+                if "0x00000522" in error_text or "1314" in error_text:
+                    raise RuntimeError(
+                        "Windows denied audit-policy inspection (0x00000522: required privilege not held). "
+                        "Close the application and relaunch it from PowerShell opened with Run as administrator. "
+                        "This is an access limitation, not a finding that the audit policy is insecure."
+                    )
+                raise RuntimeError(error_text or "auditpol query failed.")
             rows = list(csv.DictReader(io.StringIO(result.stdout)))
             if not rows:
                 raise RuntimeError("auditpol returned no parseable policy rows.")
