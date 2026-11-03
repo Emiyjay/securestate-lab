@@ -18,6 +18,8 @@ from PySide6.QtWidgets import (
 from securestate.platform_info import identify_platform
 from securestate.assessments.host_firewall import assess_host_firewall
 from securestate.assessments.security_logging import assess_security_logging
+from securestate.assessments.audit_policy import collect_windows_audit_policy
+from securestate.assessments.audit_policy_baseline import compare_audit_policy
 from securestate.discovery import collect_system_inventory
 from securestate.assessments.security_configuration import assess_security_configuration
 from securestate.assessments.windows_firewall import (
@@ -595,6 +597,35 @@ class MainWindow(QMainWindow):
         card_layout.addWidget(self.logging_summary)
         card_layout.addWidget(self.logging_table)
 
+        self.audit_baseline_button = QPushButton(
+            "Compare Windows Audit Policy with Baseline"
+        )
+        self.audit_baseline_button.setObjectName("action_button")
+        self.audit_baseline_button.clicked.connect(
+            self.run_audit_policy_baseline
+        )
+        self.audit_baseline_summary = QLabel(
+            "Windows Client audit-policy baseline has not been evaluated."
+        )
+        self.audit_baseline_summary.setObjectName("muted_text")
+        self.audit_baseline_summary.setWordWrap(True)
+
+        self.audit_baseline_table = QTableWidget(0, 5)
+        self.audit_baseline_table.setHorizontalHeaderLabels([
+            "Control", "Status", "Observed", "Expected", "Explanation"
+        ])
+        self.audit_baseline_table.horizontalHeader().setSectionResizeMode(
+            QHeaderView.ResizeMode.ResizeToContents
+        )
+        self.audit_baseline_table.horizontalHeader().setStretchLastSection(True)
+        self.audit_baseline_table.setWordWrap(True)
+        self.audit_baseline_table.setMinimumHeight(220)
+        self.audit_baseline_table.verticalHeader().setVisible(False)
+
+        card_layout.addWidget(self.audit_baseline_button)
+        card_layout.addWidget(self.audit_baseline_summary)
+        card_layout.addWidget(self.audit_baseline_table)
+
         self.configuration_button = QPushButton("Run Security Configuration Assessment")
         self.configuration_button.setObjectName("action_button")
         self.configuration_button.clicked.connect(self.run_configuration_assessment)
@@ -724,6 +755,44 @@ class MainWindow(QMainWindow):
         finally:
             self.logging_button.setEnabled(True)
             self.logging_button.setText("Run Security Logging Assessment")
+
+    def run_audit_policy_baseline(self):
+        self.audit_baseline_button.setEnabled(False)
+        self.audit_baseline_button.setText("Collecting and Comparing...")
+        try:
+            collection = collect_windows_audit_policy()
+            result = compare_audit_policy(collection)
+            self.audit_baseline_table.setRowCount(len(result.findings))
+            counts = {}
+            for index, finding in enumerate(result.findings):
+                status = finding.status.value
+                counts[status] = counts.get(status, 0) + 1
+                values = [
+                    finding.control_name,
+                    status,
+                    finding.observed_setting or "No matching evidence",
+                    finding.expected_setting,
+                    finding.explanation,
+                ]
+                for column, value in enumerate(values):
+                    item = QTableWidgetItem(str(value))
+                    item.setToolTip(str(value))
+                    self.audit_baseline_table.setItem(index, column, item)
+
+            self.audit_baseline_summary.setText(
+                f"{result.status.value} | {result.summary} | "
+                f"Baseline: {result.baseline_id} ({result.baseline_version}) | "
+                "Read-only comparison; no settings were changed."
+            )
+            self.statusBar().showMessage("Windows audit-policy baseline comparison completed.")
+        except Exception as error:
+            self.audit_baseline_summary.setText(f"Baseline assessment error: {error}")
+            self.statusBar().showMessage("Windows audit-policy baseline comparison failed.")
+        finally:
+            self.audit_baseline_button.setEnabled(True)
+            self.audit_baseline_button.setText(
+                "Compare Windows Audit Policy with Baseline"
+            )
 
     def run_configuration_assessment(self):
         if not self.last_inventory:
