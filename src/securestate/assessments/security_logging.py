@@ -1,6 +1,8 @@
 """Read-only security logging checks for the local Windows or Linux host."""
 from __future__ import annotations
 
+import csv
+import io
 import json
 import platform
 import shutil
@@ -11,6 +13,87 @@ from securestate.models import AssessmentResult, CheckStatus
 
 def _run(command: list[str], timeout: int = 15) -> subprocess.CompletedProcess[str]:
     return subprocess.run(command, capture_output=True, text=True, timeout=timeout, check=False)
+
+
+def _assess_audit_configuration(os_name: str) -> AssessmentResult:
+    """Collect audit-policy evidence without claiming compliance to an absent baseline."""
+    status = CheckStatus.UNKNOWN
+    summary = "Audit configuration was collected but cannot be judged without an approved baseline."
+    evidence = ""
+    recommendation = (
+        "Compare the collected audit configuration with a documented baseline such as the "
+        "applicable CIS Benchmark or an organisation-approved policy."
+    )
+    try:
+        if os_name == "Windows":
+            executable = shutil.which("auditpol.exe") or shutil.which("auditpol")
+            if not executable:
+                raise RuntimeError("auditpol was not found.")
+            result = _run([executable, "/get", "/category:*", "/r"])
+            if result.returncode != 0:
+                raise RuntimeError(result.stderr.strip() or "auditpol query failed.")
+            rows = list(csv.DictReader(io.StringIO(result.stdout)))
+            if not rows:
+                raise RuntimeError("auditpol returned no parseable policy rows.")
+            enabled = []
+            disabled = []
+            for row in rows:
+                setting = next(
+                    (value for key, value in row.items()
+                     if key and "inclusion setting" in key.lower()),
+                    "",
+                ).strip()
+                subcategory = next(
+                    (value for key, value in row.items()
+                     if key and "subcategory" in key.lower() and "guid" not in key.lower()),
+                    "Unknown subcategory",
+                ).strip()
+                if setting and "no auditing" not in setting.lower():
+                    enabled.append(f"{subcategory}: {setting}")
+                else:
+                    disabled.append(subcategory)
+            evidence = (
+                f"auditpol returned {len(rows)} subcategory row(s); "
+                f"{len(enabled)} have auditing enabled and {len(disabled)} report No Auditing."
+            )
+            if enabled:
+                evidence += " Enabled examples: " + "; ".join(enabled[:8])
+            if disabled:
+                evidence += " Disabled examples: " + "; ".join(disabled[:8])
+        elif os_name == "Linux":
+            if not shutil.which("systemctl"):
+                raise RuntimeError("systemctl was not found.")
+            service = _run(["systemctl", "is-active", "auditd"])
+            service_state = service.stdout.strip() or "unknown"
+            if shutil.which("auditctl"):
+                audit = _run(["auditctl", "-s"])
+                audit_output = audit.stdout.strip() if audit.returncode == 0 else (
+                    audit.stderr.strip() or "auditctl query failed"
+                )
+            else:
+                audit_output = "auditctl unavailable"
+            evidence = f"auditd service state: {service_state}; auditctl status: {audit_output[:1600]}."
+            if service_state != "active" and "auditctl unavailable" in audit_output:
+                summary = "Linux audit daemon and audit control utility were not confirmed."
+            else:
+                summary = "Linux audit service and kernel audit status were inspected; policy compliance needs a baseline."
+        else:
+            status = CheckStatus.NOT_APPLICABLE
+            summary = f"Audit configuration adapter does not support {os_name}."
+            evidence = f"Detected platform: {os_name}."
+    except (OSError, RuntimeError, subprocess.SubprocessError, ValueError, csv.Error) as exc:
+        evidence = f"Audit configuration inspection error: {exc}"
+        summary = "Audit configuration could not be collected; no secure state is assumed."
+
+    return AssessmentResult.create(
+        check_id="LOG-AUDIT-001",
+        control="Audit policy configuration",
+        platform=os_name,
+        status=status,
+        summary=summary,
+        evidence=evidence,
+        recommendation=recommendation,
+    )
 
 
 def assess_security_logging(os_name: str | None = None) -> list[AssessmentResult]:
@@ -100,7 +183,7 @@ def assess_security_logging(os_name: str | None = None) -> list[AssessmentResult
         evidence = f"Logging inspection error: {exc}"
         summary = "Logging availability could not be verified; no secure state is assumed."
 
-    return [AssessmentResult.create(
+    availability = AssessmentResult.create(
         check_id="LOG-AVAIL-001",
         control="Security logging availability",
         platform=os_name,
@@ -108,4 +191,5 @@ def assess_security_logging(os_name: str | None = None) -> list[AssessmentResult
         summary=summary,
         evidence=evidence,
         recommendation=recommendation,
-    )]
+    )
+    return [availability, _assess_audit_configuration(os_name)]
