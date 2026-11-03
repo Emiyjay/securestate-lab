@@ -18,6 +18,7 @@ class TestSecurityLogging(unittest.TestCase):
             subprocess.CompletedProcess([], 0, "active\n", ""),
             subprocess.CompletedProcess([], 3, "inactive\n", ""),
             subprocess.CompletedProcess([], 0, "-- Logs begin --\n", ""),
+            subprocess.CompletedProcess([], 0, "enabled 1\n", ""),
         ]
         result = assess_security_logging("Linux")[0]
         self.assertEqual(result.status, CheckStatus.PASS)
@@ -30,6 +31,7 @@ class TestSecurityLogging(unittest.TestCase):
             subprocess.CompletedProcess([], 3, "inactive\n", ""),
             subprocess.CompletedProcess([], 3, "failed\n", ""),
             subprocess.CompletedProcess([], 0, "", ""),
+            subprocess.CompletedProcess([], 0, "enabled 1\n", ""),
         ]
         result = assess_security_logging("Linux")[0]
         self.assertEqual(result.status, CheckStatus.FAIL)
@@ -38,6 +40,35 @@ class TestSecurityLogging(unittest.TestCase):
     def test_linux_without_systemctl_is_unknown(self, _which):
         result = assess_security_logging("Linux")[0]
         self.assertEqual(result.status, CheckStatus.UNKNOWN)
+
+
+    @patch("securestate.assessments.security_logging.shutil.which", return_value="auditpol.exe")
+    @patch("securestate.assessments.security_logging._run")
+    def test_windows_audit_policy_is_reported_as_unknown_without_baseline(self, run, _which):
+        run.side_effect = [
+            subprocess.CompletedProcess([], 0, '{"service":"Running","latest_event_id":1,"latest_event_time":"2026-11-03T10:00:00"}', ""),
+            subprocess.CompletedProcess([], 0,
+                '"Machine Name","Policy Target","Subcategory","Subcategory GUID","Inclusion Setting","Exclusion Setting"\n'
+                '"HOST","System","Logon","guid","Success and Failure",""\n'
+                '"HOST","System","Account Management","guid2","No Auditing",""', ""),
+        ]
+        results = assess_security_logging("Windows")
+        audit = next(item for item in results if item.check_id == "LOG-AUDIT-001")
+        self.assertEqual(audit.status, CheckStatus.UNKNOWN)
+        self.assertIn("1 have auditing enabled", audit.evidence)
+        self.assertIn("1 report No Auditing", audit.evidence)
+
+    @patch("securestate.assessments.security_logging.shutil.which", return_value="auditpol.exe")
+    @patch("securestate.assessments.security_logging._run")
+    def test_audit_policy_query_failure_is_unknown(self, run, _which):
+        run.side_effect = [
+            subprocess.CompletedProcess([], 0, '{"service":"Running","latest_event_id":1,"latest_event_time":"2026-11-03T10:00:00"}', ""),
+            subprocess.CompletedProcess([], 1, "", "access denied"),
+        ]
+        results = assess_security_logging("Windows")
+        audit = next(item for item in results if item.check_id == "LOG-AUDIT-001")
+        self.assertEqual(audit.status, CheckStatus.UNKNOWN)
+        self.assertIn("access denied", audit.evidence)
 
     def test_unsupported_platform_is_not_applicable(self):
         result = assess_security_logging("FreeBSD")[0]
