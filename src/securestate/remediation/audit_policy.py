@@ -72,6 +72,17 @@ def build_audit_policy_plan(
             RemediationPlanStatus.BLOCKED, (), tuple(warnings), True,
         )
 
+    machine_names = {row.machine_name for row in collection.rows if row.machine_name}
+    if len(machine_names) > 1:
+        warnings.append(
+            "Evidence contains multiple machine names; the plan is blocked to "
+            "prevent applying one host's findings to another host."
+        )
+        return RemediationPlan(
+            new_plan_id(), utc_now(), "", BASELINE_ID, BASELINE_VERSION,
+            RemediationPlanStatus.BLOCKED, (), tuple(warnings), True,
+        )
+
     rows_by_guid: dict[str, list] = defaultdict(list)
     for row in collection.rows:
         rows_by_guid[row.subcategory_guid.upper()].append(row)
@@ -122,10 +133,7 @@ def build_audit_policy_plan(
             "additional evidence are not eligible for automated planning."
         )
 
-    machine_names = {row.machine_name for row in collection.rows if row.machine_name}
     machine_name = next(iter(machine_names)) if len(machine_names) == 1 else ""
-    if len(machine_names) > 1:
-        warnings.append("Evidence contains multiple machine names; host identity is ambiguous.")
 
     return RemediationPlan(
         new_plan_id(), utc_now(), machine_name, BASELINE_ID, BASELINE_VERSION,
