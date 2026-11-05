@@ -55,6 +55,14 @@ class TestRemediationPreview(unittest.TestCase):
         self.assertEqual(len(build_audit_policy_plan(duplicate, criteria=(criterion,)).actions), 0)
         self.assertEqual(len(build_audit_policy_plan(missing, criteria=(criterion,)).actions), 0)
 
+    def test_mixed_machine_evidence_blocks_plan(self):
+        criterion = WINDOWS_CLIENT_BASELINE[0]
+        first = AuditPolicyRow("VM-A", "System", criterion.name, criterion.guid, "No Auditing", "")
+        second = AuditPolicyRow("VM-B", "System", criterion.name, criterion.guid, "No Auditing", "")
+        plan = build_audit_policy_plan(make_collection([first, second]), criteria=(criterion,))
+        self.assertEqual(plan.status, RemediationPlanStatus.BLOCKED)
+        self.assertEqual(plan.actions, ())
+
     def test_failed_collection_blocks_plan(self):
         plan = build_audit_policy_plan(make_collection([], success=False, error="access denied"))
         self.assertEqual(plan.status, RemediationPlanStatus.BLOCKED)
