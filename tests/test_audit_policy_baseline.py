@@ -44,6 +44,7 @@ class TestAuditPolicyBaseline(unittest.TestCase):
     def test_windows_client_baseline_uses_correct_system_audit_guids(self):
         expected = {
             "IPsec Driver": "{0CCE9213-69AE-11D9-BED3-505054503030}",
+            "Logoff": "{0CCE9216-69AE-11D9-BED3-505054503030}",
             "Security State Change": "{0CCE9210-69AE-11D9-BED3-505054503030}",
             "Security System Extension": "{0CCE9211-69AE-11D9-BED3-505054503030}",
             "System Integrity": "{0CCE9212-69AE-11D9-BED3-505054503030}",

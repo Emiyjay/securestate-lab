@@ -57,7 +57,7 @@ WINDOWS_CLIENT_BASELINE = (
     _criterion("0CCE922B-69AE-11D9-BED3-505054503030", "Process Creation", True, False,
                "Microsoft recommends successful process-creation auditing.",
                "Event volume can be medium to high depending on process activity."),
-    _criterion("0CCE9217-69AE-11D9-BED3-505054503030", "Logoff", True, False,
+    _criterion("0CCE9216-69AE-11D9-BED3-505054503030", "Logoff", True, False,
                "Microsoft recommends successful logoff auditing."),
     _criterion("0CCE9215-69AE-11D9-BED3-505054503030", "Logon", True, True,
                "Microsoft recommends both successful and failed logon auditing."),

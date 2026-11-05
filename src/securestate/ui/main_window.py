@@ -1,4 +1,4 @@
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QThreadPool, Slot
 from PySide6.QtWidgets import (
     QFrame,
     QGridLayout,
@@ -14,6 +14,8 @@ from PySide6.QtWidgets import (
     QHeaderView,
     QScrollArea,
 )
+
+from securestate.ui.workers import BackgroundWorker
 
 from securestate.platform_info import identify_platform
 from securestate.assessments.host_firewall import assess_host_firewall
@@ -46,6 +48,9 @@ class MainWindow(QMainWindow):
         self.system_info_labels = {}
         self.last_inventory = None
         self.last_vulnerability_results = None
+        self.thread_pool = QThreadPool.globalInstance()
+        self.active_workers = {}
+        self.background_tasks = {}
 
         self.create_interface()
 
@@ -936,125 +941,218 @@ class MainWindow(QMainWindow):
         scroll.setWidget(page)
         return scroll
 
+    def _start_background_task(
+        self, key, button, busy_text, normal_text,
+        summary_label, operation, on_success
+    ):
+        if key in self.active_workers:
+            return
+
+        button.setEnabled(False)
+        button.setText(busy_text)
+        summary_label.setText(
+            "Working in the background. The interface remains available."
+        )
+
+        self.background_tasks[key] = {
+            "button": button,
+            "normal_text": normal_text,
+            "summary_label": summary_label,
+            "on_success": on_success,
+        }
+
+        worker = BackgroundWorker(key, operation)
+        self.active_workers[key] = worker
+        worker.signals.completed.connect(
+            self._handle_background_task_completed
+        )
+        self.thread_pool.start(worker)
+
+    @Slot(str, object, object)
+    def _handle_background_task_completed(self, key, result, error):
+        task = self.background_tasks.pop(key, None)
+        self.active_workers.pop(key, None)
+
+        if task is None:
+            return
+
+        button = task["button"]
+        summary_label = task["summary_label"]
+        button.setEnabled(True)
+        button.setText(task["normal_text"])
+
+        if error is not None:
+            summary_label.setText(f"Assessment failed: {error}")
+            self.statusBar().showMessage("Background assessment failed.")
+            return
+
+        try:
+            task["on_success"](result)
+        except Exception as display_error:
+            summary_label.setText(
+                "Assessment completed, but displaying its results failed: "
+                f"{display_error}"
+            )
+            self.statusBar().showMessage(
+                "Could not display assessment results."
+            )
+
     def run_nvd_enrichment(self):
         if not self.last_inventory:
             self.nvd_summary.setText("Run Full System Inventory first.")
             return
-        if self.last_inventory.get("system", {}).get("operating_system", "") != "Windows":
-            self.nvd_summary.setText("NVD product enrichment currently requires Windows product inventory.")
-            return
-        self.nvd_button.setEnabled(False)
-        self.nvd_button.setText("Querying NVD...")
-        self.nvd_summary.setText("Searching NVD CPE records for all inventoried Windows products. This may take time.")
-        try:
-            result = assess_windows_products_with_nvd(self.last_inventory.get('software', []))
-            rows = []
-            for product in result.get("matches", []):
-                candidates = product.get("nvd_candidates", [])
-                if not candidates:
-                    rows.append((
-                        product.get("product", ""),
-                        product.get("installed_version", ""),
-                        "",
-                        product.get("nvd_status", ""),
-                        "",
-                        "",
-                    ))
-                for candidate in candidates:
-                    rows.append((
-                        product.get("product", ""),
-                        product.get("installed_version", ""),
-                        candidate.get("cve_id", ""),
-                        product.get("nvd_status", ""),
-                        candidate.get("vuln_status", ""),
-                        candidate.get("description", ""),
-                    ))
-            self.nvd_table.setRowCount(len(rows))
-            for row, values in enumerate(rows):
-                for column, value in enumerate(values):
-                    cell = QTableWidgetItem(str(value))
-                    cell.setToolTip(str(value))
-                    self.nvd_table.setItem(row, column, cell)
 
-            errors = result.get("source_errors", [])
+        if self.last_inventory.get("system", {}).get(
+            "operating_system", ""
+        ) != "Windows":
             self.nvd_summary.setText(
-                f"Status: {result.get('status')} | Products queried: {result.get('products_queried', 0)}"
-                f" | Exact CPE candidates: {result.get('cpe_candidates', 0)}"
-                f" | CVE candidates: {result.get('cve_candidates', 0)}"
-                f" | Source errors: {len(errors)}"
-                + (" | " + "; ".join(item.get("error", "") for item in errors) if errors else "")
-                + " | All NVD results require manual version/configuration validation."
+                "NVD product enrichment currently requires Windows product inventory."
             )
-            self.statusBar().showMessage("NVD CPE/CVE enrichment completed.")
-        except Exception as error:
-            self.nvd_summary.setText(f"NVD enrichment error: {error}")
-        finally:
-            self.nvd_button.setEnabled(True)
-            self.nvd_button.setText("Assess All Windows Products with NVD CPE/CVE")
+            return
+
+        software = list(self.last_inventory.get("software", []))
+        self._start_background_task(
+            "nvd",
+            self.nvd_button,
+            "Querying NVD...",
+            "Assess All Windows Products with NVD CPE/CVE",
+            self.nvd_summary,
+            lambda: assess_windows_products_with_nvd(software),
+            self._display_nvd_results,
+        )
+
+    def _display_nvd_results(self, result):
+        rows = []
+
+        for product in result.get("matches", []):
+            candidates = product.get("nvd_candidates", [])
+
+            if not candidates:
+                rows.append((
+                    product.get("product", ""),
+                    product.get("installed_version", ""),
+                    "",
+                    product.get("nvd_status", ""),
+                    "",
+                    "",
+                ))
+
+            for candidate in candidates:
+                rows.append((
+                    product.get("product", ""),
+                    product.get("installed_version", ""),
+                    candidate.get("cve_id", ""),
+                    product.get("nvd_status", ""),
+                    candidate.get("vuln_status", ""),
+                    candidate.get("description", ""),
+                ))
+
+        self.nvd_table.setRowCount(len(rows))
+        for row, values in enumerate(rows):
+            for column, value in enumerate(values):
+                cell = QTableWidgetItem(str(value))
+                cell.setToolTip(str(value))
+                self.nvd_table.setItem(row, column, cell)
+
+        errors = result.get("source_errors", [])
+        self.nvd_summary.setText(
+            f"Status: {result.get('status')} "
+            f"| Products queried: {result.get('products_queried', 0)} "
+            f"| Exact CPE candidates: {result.get('cpe_candidates', 0)} "
+            f"| CVE candidates: {result.get('cve_candidates', 0)} "
+            f"| Source errors: {len(errors)}"
+            + (
+                " | " + "; ".join(
+                    item.get("error", "") for item in errors
+                ) if errors else ""
+            )
+            + " | All NVD results require manual version/configuration validation."
+        )
+        self.statusBar().showMessage("NVD CPE/CVE enrichment completed.")
 
     def run_vulnerability_assessment(self):
         if not self.last_inventory:
             self.vulnerability_summary.setText(
-                "No inventory available. Open System Discovery and run Full System Inventory first."
+                "No inventory available. Open System Discovery and run "
+                "Full System Inventory first."
             )
             return
 
-        self.vulnerability_button.setEnabled(False)
-        self.vulnerability_button.setText("Querying Vulnerability Sources...")
-        self.vulnerability_summary.setText("Querying OSV and CISA KEV. This may take a short while.")
-        try:
-            software = self.last_inventory.get("software", [])
-            result = assess_package_vulnerabilities(software)
-            self.last_vulnerability_results = result
-            findings = result.get("findings", [])
-            self.vulnerability_table.setRowCount(len(findings))
-            for row, finding in enumerate(findings):
-                values = [
-                    finding.get("package", ""),
-                    finding.get("version", ""),
-                    ", ".join(finding.get("cve_ids", [])) or finding.get("vulnerability_id", ""),
-                    finding.get("classification", ""),
-                    "YES" if finding.get("known_exploited") else "No",
-                    ", ".join(finding.get("sources", [])),
-                    finding.get("summary", ""),
-                ]
-                for column, value in enumerate(values):
-                    cell = QTableWidgetItem(str(value))
-                    cell.setToolTip(str(value))
-                    self.vulnerability_table.setItem(row, column, cell)
+        software = list(self.last_inventory.get("software", []))
+        self._start_background_task(
+            "osv",
+            self.vulnerability_button,
+            "Querying Vulnerability Sources...",
+            "Run Package Vulnerability Assessment",
+            self.vulnerability_summary,
+            lambda: assess_package_vulnerabilities(software),
+            self._display_vulnerability_results,
+        )
 
-            errors = result.get("source_errors", [])
-            kev_status = result.get("kev_correlation_status", "UNKNOWN")
-            kev_count = result.get("kev_catalogue_entries")
-            if kev_status == "EVALUATED":
-                kev_text = f"CISA KEV catalogue entries: {kev_count}"
-            elif kev_status == "NOT_EVALUATED_NO_SUPPORTED_PACKAGES":
-                kev_text = "CISA KEV correlation: not evaluated"
-            else:
-                kev_text = "CISA KEV catalogue: unavailable"
-            unsupported_reasons = {}
-            for item in result.get("unsupported_details", []):
-                reason = item.get("reason", "unknown")
-                unsupported_reasons[reason] = unsupported_reasons.get(reason, 0) + 1
-            reason_text = ", ".join(
-                f"{key}: {value}" for key, value in sorted(unsupported_reasons.items())
-            ) or "none"
-            self.vulnerability_summary.setText(
-                f"Assessment completed | Packages queried: {result.get('queried_packages', 0)}"
-                f" | Unsupported inventory records: {result.get('unsupported_records', 0)} ({reason_text})"
-                f" | Candidate findings: {len(findings)}"
-                f" | KEV-linked findings: {sum(1 for item in findings if item.get('known_exploited'))}"
-                f" | {kev_text}"
-                f" | Source errors: {len(errors)}"
-                + (" | " + "; ".join(f"{item['source']}: {item['error']}" for item in errors) if errors else "")
+    def _display_vulnerability_results(self, result):
+        self.last_vulnerability_results = result
+        findings = result.get("findings", [])
+        self.vulnerability_table.setRowCount(len(findings))
+
+        for row, finding in enumerate(findings):
+            values = [
+                finding.get("package", ""),
+                finding.get("version", ""),
+                ", ".join(finding.get("cve_ids", []))
+                or finding.get("vulnerability_id", ""),
+                finding.get("classification", ""),
+                "YES" if finding.get("known_exploited") else "No",
+                ", ".join(finding.get("sources", [])),
+                finding.get("summary", ""),
+            ]
+            for column, value in enumerate(values):
+                cell = QTableWidgetItem(str(value))
+                cell.setToolTip(str(value))
+                self.vulnerability_table.setItem(row, column, cell)
+
+        errors = result.get("source_errors", [])
+        kev_status = result.get("kev_correlation_status", "UNKNOWN")
+        kev_count = result.get("kev_catalogue_entries")
+
+        if kev_status == "EVALUATED":
+            kev_text = f"CISA KEV catalogue entries: {kev_count}"
+        elif kev_status == "NOT_EVALUATED_NO_SUPPORTED_PACKAGES":
+            kev_text = "CISA KEV correlation: not evaluated"
+        else:
+            kev_text = "CISA KEV catalogue: unavailable"
+
+        unsupported_reasons = {}
+        for item in result.get("unsupported_details", []):
+            reason = item.get("reason", "unknown")
+            unsupported_reasons[reason] = (
+                unsupported_reasons.get(reason, 0) + 1
             )
-            self.statusBar().showMessage("Vulnerability intelligence query completed.")
-        except Exception as error:
-            self.vulnerability_summary.setText(f"Vulnerability intelligence error: {error}")
-            self.statusBar().showMessage("Vulnerability intelligence query failed.")
-        finally:
-            self.vulnerability_button.setEnabled(True)
-            self.vulnerability_button.setText("Run Package Vulnerability Assessment")
+
+        reason_text = ", ".join(
+            f"{key}: {value}"
+            for key, value in sorted(unsupported_reasons.items())
+        ) or "none"
+
+        self.vulnerability_summary.setText(
+            f"Assessment completed "
+            f"| Packages queried: {result.get('queried_packages', 0)} "
+            f"| Unsupported inventory records: "
+            f"{result.get('unsupported_records', 0)} ({reason_text}) "
+            f"| Candidate findings: {len(findings)} "
+            f"| KEV-linked findings: "
+            f"{sum(1 for item in findings if item.get('known_exploited'))} "
+            f"| {kev_text} "
+            f"| Source errors: {len(errors)}"
+            + (
+                " | " + "; ".join(
+                    f"{item['source']}: {item['error']}"
+                    for item in errors
+                ) if errors else ""
+            )
+        )
+        self.statusBar().showMessage(
+            "Package vulnerability assessment completed."
+        )
 
     def run_windows_product_screening(self):
         if not self.last_inventory:
@@ -1063,51 +1161,63 @@ class MainWindow(QMainWindow):
             )
             return
 
-        system_name = self.last_inventory.get("system", {}).get("operating_system", "")
-        if system_name != "Windows":
+        if self.last_inventory.get("system", {}).get(
+            "operating_system", ""
+        ) != "Windows":
             self.windows_product_summary.setText(
-                "This screening currently supports Windows registry software inventory only."
+                "This screening currently supports Windows registry software "
+                "inventory only."
             )
             return
 
-        self.windows_product_button.setEnabled(False)
-        self.windows_product_button.setText("Screening Windows Products...")
-        try:
-            result = screen_windows_products_against_kev(
-                self.last_inventory.get("software", [])
-            )
-            matches = result.get("matches", [])
-            self.windows_product_table.setRowCount(len(matches))
-            for row, match in enumerate(matches):
-                values = [
-                    match.get("product", ""),
-                    match.get("installed_version", ""),
-                    match.get("publisher", ""),
-                    match.get("cve_id", ""),
-                    match.get("catalogue_product", ""),
-                    match.get("classification", ""),
-                    match.get("assessment_note", ""),
-                ]
-                for column, value in enumerate(values):
-                    cell = QTableWidgetItem(str(value))
-                    cell.setToolTip(str(value))
-                    self.windows_product_table.setItem(row, column, cell)
+        software = list(self.last_inventory.get("software", []))
+        self._start_background_task(
+            "kev",
+            self.windows_product_button,
+            "Screening Windows Products...",
+            "Screen Windows Products Against CISA KEV",
+            self.windows_product_summary,
+            lambda: screen_windows_products_against_kev(software),
+            self._display_windows_product_results,
+        )
 
-            errors = result.get("source_errors", [])
-            self.windows_product_summary.setText(
-                f"Status: {result.get('status')} | Products screened: {result.get('products_screened', 0)}"
-                f" | Exact catalogue matches: {len(matches)}"
-                f" | Unsupported records: {result.get('unsupported_records', 0)}"
-                f" | CISA KEV catalogue entries: {result.get('kev_catalogue_entries', 'Unavailable')}"
-                f" | Source errors: {len(errors)}"
-                + (" | " + "; ".join(item["error"] for item in errors) if errors else "")
+    def _display_windows_product_results(self, result):
+        matches = result.get("matches", [])
+        self.windows_product_table.setRowCount(len(matches))
+
+        for row, match in enumerate(matches):
+            values = [
+                match.get("product", ""),
+                match.get("installed_version", ""),
+                match.get("publisher", ""),
+                match.get("cve_id", ""),
+                match.get("catalogue_product", ""),
+                match.get("classification", ""),
+                match.get("assessment_note", ""),
+            ]
+            for column, value in enumerate(values):
+                cell = QTableWidgetItem(str(value))
+                cell.setToolTip(str(value))
+                self.windows_product_table.setItem(row, column, cell)
+
+        errors = result.get("source_errors", [])
+        self.windows_product_summary.setText(
+            f"Status: {result.get('status')} "
+            f"| Products screened: {result.get('products_screened', 0)} "
+            f"| Exact catalogue matches: {len(matches)} "
+            f"| Unsupported records: {result.get('unsupported_records', 0)} "
+            f"| CISA KEV catalogue entries: "
+            f"{result.get('kev_catalogue_entries', 'Unavailable')} "
+            f"| Source errors: {len(errors)}"
+            + (
+                " | " + "; ".join(
+                    item["error"] for item in errors
+                ) if errors else ""
             )
-            self.statusBar().showMessage("Windows product catalogue screening completed.")
-        except Exception as error:
-            self.windows_product_summary.setText(f"Windows product screening error: {error}")
-        finally:
-            self.windows_product_button.setEnabled(True)
-            self.windows_product_button.setText("Screen Windows Products Against CISA KEV")
+        )
+        self.statusBar().showMessage(
+            "Windows product catalogue screening completed."
+        )
 
     def create_placeholder_page(self, title, description):
         page = QWidget()
