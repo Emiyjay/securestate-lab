@@ -33,7 +33,7 @@ def _is_fresh(plan_created: str, collected: str) -> bool:
     try:
         plan_time = datetime.fromisoformat(plan_created)
         collection_time = datetime.fromisoformat(collected)
-        return collection_time >= plan_time
+        return collection_time > plan_time
     except (TypeError, ValueError):
         return False
 
